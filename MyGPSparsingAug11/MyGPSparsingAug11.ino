@@ -129,6 +129,8 @@ typedef struct {
    
 } GPSdata ;
 
+byte GPSdataCRC;
+
 union LATdata {
   float myLatitudeDegrees;
   byte LATArrayOfFourBytes[4];
@@ -278,7 +280,7 @@ byte eepromLastAddress = 0;  //points to last address written to.
             gpsdata.myYear = GPS.year;
             latdata.myLatitudeDegrees = GPS.latitudeDegrees;
             londata.myLongitudeDegrees = GPS.longitudeDegrees;
-            Serial.println(i2ccrc8(&gpsdata.myHour,14),HEX);
+            GPSDataCRC=i2ccrc8(&gpsdata.myHour,14);
             
 
             writeEEPROM(disk1,eepromaddress+0,gpsdata.myHour);
@@ -296,6 +298,9 @@ byte eepromLastAddress = 0;  //points to last address written to.
             writeEEPROM(disk1,eepromaddress+12,londata.LONArrayOfFourBytes[2]);
             writeEEPROM(disk1,eepromaddress+13,londata.LONArrayOfFourBytes[3]);
             
+           eepromaddress +=GPSPageSize;
+
+
             digitalWrite(First_ledPin, LOW);
 
   } else if (stringComplete) {
