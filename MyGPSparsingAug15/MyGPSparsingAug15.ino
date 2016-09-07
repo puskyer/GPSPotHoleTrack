@@ -82,8 +82,17 @@ $GPGGA,023900.000,4503.1057,N,07523.7231,W,1,07,1.65,80.6,M,-33.9,M,,*6C
 
 
 #include <Adafruit_GPS.h>
-#include <SoftwareSerial.h>
+// #include <SoftwareSerial.h>
 #include <Wire.h>    
+
+#if defined(ARDUINO_SAMD_ZERO) && defined(SERIAL_PORT_USBVIRTUAL)
+  // Required for Serial on Zero based boards
+  #define Serial SERIAL_PORT_USBVIRTUAL
+#endif
+
+#if !defined(ARDUINO_ARCH_SAM) && !defined(ARDUINO_ARCH_SAMD) && !defined(ESP8266) && !defined(ARDUINO_ARCH_STM32F2)
+ #include <util/delay.h>
+#endif
  
 #define disk1 0x50        //Address of 24C02 eeprom chip
 #define eepromSize 255   //24C02 eeprom chip is 256 bytes or 32 pages  x 8 bytes or 2K bits
@@ -100,21 +109,21 @@ byte eepromLastAddress = 0;  //points to last address written to.
 
 // constants won't change. They're used here to
 // set pin numbers:
-const byte First_buttonPin = 5;     // the number of the pushbutton pin
-//const byte First_ledPin = 11;      // the number of the LED pin
-//const byte Second_buttonPin = 6;     // the number of the pushbutton pin
+const byte First_buttonPin = 12;     // the number of the pushbutton pin
+const byte First_ledPin = 13;      // the number of the LED pin
+const byte Second_buttonPin = 11;     // the number of the pushbutton pin
 //const byte Second_ledPin = 12;      // the number of the LED pin
 //const byte Third_buttonPin = 9;     // the number of the pushbutton pin
-const byte Third_ledPin = 13;      // the number of the LED pin
+//const byte Third_ledPin = 13;      // the number of the LED pin
 
 // variables will change:
 boolean  First_buttonState = false;     // variable for first pushbutton status
-//boolean Second_buttonState = false;     // variable for reading the pushbutton status
+boolean Second_buttonState = false;     // variable for reading the pushbutton status
 //boolean Third_buttonState = false;      // variable for reading the pushbutton status
 
-//unsigned long StartButtonPress = 0;          // start of button press time
-//unsigned long StopButtonPress = 0;           // end of button press time
-//unsigned long First_buttonPressDelay = 0;
+unsigned long StartButtonPress = 0;          // start of button press time
+unsigned long StopButtonPress = 0;           // end of button press time
+unsigned long First_buttonPressDelay = 0;
 
 String inputString;         // a string to hold incoming data
 boolean stringComplete = false;  // whether the string is complete
@@ -160,7 +169,6 @@ union LONdata {
 // CRC should be DD18
 // char *t = (char *)"DEADBEEF";
 
-
 // If you're using a GPS module:
 // Connect the GPS Power pin to 5V
 // Connect the GPS Ground pin to ground
@@ -172,9 +180,10 @@ union LONdata {
 //   Connect the GPS RX (receive) pin to matching TX1, TX2 or TX3
 // If using software serial, keep this line enabled
 // (you can change the pin numbers to match your wiring):
-SoftwareSerial mySerial(3, 2);
+// SoftwareSerial mySerial(3, 2);
+// Adafruit_GPS GPS(&mySerial);
 
-Adafruit_GPS GPS(&mySerial);
+Adafruit_GPS GPS(&Serial1);
 
 // Set GPSECHO to 'false' to turn off echoing the GPS data to the Serial console
 // Set to 'true' if you want to debug and listen to the raw GPS sentences. 
@@ -182,48 +191,113 @@ Adafruit_GPS GPS(&mySerial);
 
 // this keeps track of whether we're using the interrupt
 // off by default!
-boolean usingInterrupt = false;
-void useInterrupt(boolean); // Func prototype keeps Arduino 0023 happy
+//boolean usingInterrupt = false;
+//void useInterrupt(boolean); // Func prototype keeps Arduino 0023 happy
 
+/*************************************************** 
+  This is a library for our I2C LED Backpacks
+
+  Designed specifically to work with the Adafruit 16x8 LED Matrix backpacks 
+  ----> http://www.adafruit.com/products/2035
+  ----> http://www.adafruit.com/products/2036
+  ----> http://www.adafruit.com/products/2037
+  ----> http://www.adafruit.com/products/2038
+  ----> http://www.adafruit.com/products/2039
+  ----> http://www.adafruit.com/products/2040
+  ----> http://www.adafruit.com/products/2041
+  ----> http://www.adafruit.com/products/2042
+  ----> http://www.adafruit.com/products/2043
+  ----> http://www.adafruit.com/products/2044
+  ----> http://www.adafruit.com/products/2052
+
+  These displays use I2C to communicate, 2 pins are required to 
+  interface. There are multiple selectable I2C addresses. For backpacks
+  with 2 Address Select pins: 0x70, 0x71, 0x72 or 0x73. For backpacks
+  with 3 Address Select pins: 0x70 thru 0x77
+
+  Adafruit invests time and resources providing this open source code, 
+  please support Adafruit and open-source hardware by purchasing 
+  products from Adafruit!
+
+  Written by Limor Fried/Ladyada for Adafruit Industries.  
+  BSD license, all text above must be included in any redistribution
+ ****************************************************/
+
+#include "Adafruit_LEDBackpack.h"
+#include "Adafruit_GFX.h"
+
+Adafruit_8x16matrix matrix = Adafruit_8x16matrix();
+
+static const uint8_t PROGMEM
+  smile_bmp[] =
+  { B00111100,
+    B01000010,
+    B10100101,
+    B10000001,
+    B10100101,
+    B10011001,
+    B01000010,
+    B00111100 },
+  neutral_bmp[] =
+  { B00111100,
+    B01000010,
+    B10100101,
+    B10000001,
+    B10111101,
+    B10000001,
+    B01000010,
+    B00111100 },
+  frown_bmp[] =
+  { B00111100,
+    B01000010,
+    B10100101,
+    B10000001,
+    B10011001,
+    B10100101,
+    B01000010,
+    B00111100 };
 
 void setup()  
 {
- 
-  // initialize the LED pin as an output:
-//  pinMode(First_ledPin, OUTPUT);
+
+  matrix.begin(0x70);  // pass in the address
+
+// reserve 10 bytes for the inputString:
+  inputString.reserve(5);
+
+// initialize the LED pin as an output:
+  pinMode(First_ledPin, OUTPUT);
 //  pinMode(Second_ledPin, OUTPUT);  
-  pinMode(Third_ledPin, OUTPUT);  
+//  pinMode(Third_ledPin, OUTPUT);  
     
-  // initialize the pushbutton pin as an input:
+// initialize the pushbutton pin as an input:
   pinMode(First_buttonPin, INPUT);
 //  pinMode(Second_buttonPin, INPUT);
 //  pinMode(Third_buttonPin, INPUT);
-
-  // set up for eeprom 
-  Wire.begin();  
+  
+// connect at 115200 so we can read the GPS fast enough and echo without dropping chars
+// also spit it out
+// Wait for Mo usb port to switch from bootloader to Serial on the MO ****** CRITICAL TO DO THIS *********
 
   while ( ! Serial ) { delay ( 1 ); }
-  
-  // connect at 115200 so we can read the GPS fast enough and echo without dropping chars
-  // also spit it out
   Serial.begin(115200);
 
-    // reserve 10 bytes for the inputString:
-  inputString.reserve(5);
+// set up for eeprom 
+  Wire.begin();  
 
-  // read the eeprom to see if this is a restart or if it is the first time
-  // if sysdata.LastAddress[0] is zero then this is a first time if a non-zero then it is a restart
-  
+// read the eeprom to see if this is a restart or if it is the first time
+// if sysdata.LastAddress[0] is zero then this is a first time if a non-zero then it is a restart
+/*  
   eepromLastAddress = readEEPROM(disk1,(eepromSize-eepromreserver)+7);
   if ( eepromLastAddress != 0 ) {
   Weepromaddress = eepromLastAddress ;
   } else {
   eepromLastAddress = Weepromaddress ;   
   }
+*/
 
-  
-  delay(250);
-  Serial.println("Gather Location!");
+// delay(250);
+Serial.println("Gather Location!");
   
   // 9600 NMEA is the default baud rate for Adafruit MTK GPS's- some use 4800
   GPS.begin(9600);
@@ -240,100 +314,52 @@ void setup()
   // the nice thing about this code is you can have a timer0 interrupt go off
   // every 1 millisecond, and read data from the GPS for you. that makes the
   // loop code a heck of a lot easier!
-  useInterrupt(true);
+  //useInterrupt(false);
 
   // Request updates on antenna status, comment out to keep quiet
   // GPS.sendCommand(PGCMD_ANTENNA);
 
-  delay(500);
-  // Ask for firmware version
-  // Serial.println(mySerial.println(PMTK_Q_RELEASE));
+//  delay(500);
 
-  
+// Ask for firmware version
+Serial.println(Serial.println(PMTK_Q_RELEASE));
 
-// Set GPSECHO to 'false' to turn off echoing the GPS data to the Serial console
-// Set to 'true' if you want to debug and listen to the raw GPS sentences
-#define GPSECHO  false
-/*  
+/* 
+
  if (GPS.LOCUS_ReadStatus()) {
-    if (GPS.LOCUS_status) digitalWrite(First_ledPin, HIGH);  // turn LED off:
+  
+      if (GPS.LOCUS_status) digitalWrite(First_ledPin, HIGH);  // turn LED on:
+      if (GPS.LOCUS_status) digitalWrite(First_ledPin, LOW);  // turn LED off
  }
-*/ 
+ */
+
+  void writeEEPROM(byte, byte, byte);
+  byte readEEPROM(int, int);
+  boolean W_Date2eeprom();
+  int R_DataFeeprom();
+  byte i2ccrc8(byte *, byte);
 
 }
 
 void loop()                     // run over and over again
 {
 
-  union LATdata latdata;
-  union LONdata londata;
-  
-  GPSdata gpsdata ;
-  SYSdata sysdata ;
-  
+Serial.println("Starting Loop");
 
-  void writeEEPROM(byte, byte, byte);
-  byte readEEPROM(int, int);
-  byte i2ccrc8(byte *, byte);
- 
-      
+
+  matrix.clear();
+  matrix.drawBitmap(0, 0, smile_bmp, 8, 8, LED_ON);
+  matrix.writeDisplay();
+  delay(500);
+
+      Serial.println("Go here!");
   // check if the pushbutton is pressed.
   // if it is, the buttonState is HIGH:
 
-  if (digitalRead(First_buttonPin) == HIGH) {
+  if (digitalRead(First_buttonPin) == LOW) {
 
-    // turn LED on:
-    digitalWrite(Third_ledPin, HIGH);
-    delay(250);  
-
-
-       while (!GPS.parse(GPS.lastNMEA())) { Serial.println("Missed GPS Last NMEA, will try again"); }  // this also sets the newNMEAreceived() flag to false
-            Serial.println("Writting to EEPROM!");
-            
-            gpsdata.GPSHour = GPS.hour;
-            gpsdata.GPSMinutes = GPS.minute;
-            gpsdata.GPSSeconds = GPS.seconds;
-            gpsdata.GPSDay = GPS.day;
-            gpsdata.GPSMonth = GPS.month;
-            gpsdata.GPSYear = GPS.year;
-            latdata.GPSLatitudeDegrees = GPS.latitudeDegrees;
-            londata.GPSLongitudeDegrees = GPS.longitudeDegrees;
-            byte GPSDataCRC=i2ccrc8(&gpsdata.GPSHour,15);
-            
-
-            writeEEPROM(disk1,Weepromaddress+0,gpsdata.GPSHour);
-            writeEEPROM(disk1,Weepromaddress+1,gpsdata.GPSMinutes);
-            writeEEPROM(disk1,Weepromaddress+2,gpsdata.GPSSeconds);
-            writeEEPROM(disk1,Weepromaddress+3,gpsdata.GPSDay);
-            writeEEPROM(disk1,Weepromaddress+4,gpsdata.GPSMonth);
-            writeEEPROM(disk1,Weepromaddress+5,gpsdata.GPSYear);
-            writeEEPROM(disk1,Weepromaddress+6,latdata.LATArrayOfFourBytes[0]);
-            writeEEPROM(disk1,Weepromaddress+7,latdata.LATArrayOfFourBytes[1]);
-            writeEEPROM(disk1,Weepromaddress+8,latdata.LATArrayOfFourBytes[2]);
-            writeEEPROM(disk1,Weepromaddress+9,latdata.LATArrayOfFourBytes[3]);
-            writeEEPROM(disk1,Weepromaddress+10,londata.LONArrayOfFourBytes[0]);
-            writeEEPROM(disk1,Weepromaddress+11,londata.LONArrayOfFourBytes[1]);
-            writeEEPROM(disk1,Weepromaddress+12,londata.LONArrayOfFourBytes[2]);
-            writeEEPROM(disk1,Weepromaddress+13,londata.LONArrayOfFourBytes[3]);
-            writeEEPROM(disk1,Weepromaddress+14,GPSDataCRC);            
-            
-            eepromLastAddress = Weepromaddress;
-
-            // this is incase of power failure or device failure  we know when the last eepro entry was done.
-            sysdata.LastAddress[0] = eepromLastAddress;
-            writeEEPROM(disk1,(eepromSize-eepromreserver)+0,sysdata.SysHour);
-            writeEEPROM(disk1,(eepromSize-eepromreserver)+1,sysdata.SysMinutes);
-            writeEEPROM(disk1,(eepromSize-eepromreserver)+2,sysdata.SysSeconds);
-            writeEEPROM(disk1,(eepromSize-eepromreserver)+3,sysdata.SysDay);
-            writeEEPROM(disk1,(eepromSize-eepromreserver)+4,sysdata.SysMonth);
-            writeEEPROM(disk1,(eepromSize-eepromreserver)+5,sysdata.SysYear);
-            writeEEPROM(disk1,(eepromSize-eepromreserver)+6,sysdata.SysMonth);
-            writeEEPROM(disk1,(eepromSize-eepromreserver)+7,sysdata.LastAddress[0]);
-
-            Weepromaddress +=GPSpageSize;
-
-//            digitalWrite(First_ledPin, LOW);
-
+      W_Date2eeprom();
+  
   } else if (stringComplete) {
     Serial.print(inputString);
     if  ( inputString == "E" )
@@ -344,48 +370,7 @@ void loop()                     // run over and over again
       Serial.println("Erased");
     } else if ( inputString == "D" ) {
       
-            while  ( Reepromaddress <= eepromLastAddress ) {
-                gpsdata.GPSHour=readEEPROM(disk1,Reepromaddress+0);
-                gpsdata.GPSMinutes=readEEPROM(disk1,Reepromaddress+1);
-                gpsdata.GPSSeconds=readEEPROM(disk1,Reepromaddress+2);
-                gpsdata.GPSDay=readEEPROM(disk1,Reepromaddress+3);
-                gpsdata.GPSMonth=readEEPROM(disk1,Reepromaddress+4);
-                gpsdata.GPSYear=readEEPROM(disk1,Reepromaddress+5);
-                
-                latdata.LATArrayOfFourBytes[0]=readEEPROM(disk1,Reepromaddress+6);
-                latdata.LATArrayOfFourBytes[1]=readEEPROM(disk1,Reepromaddress+7);
-                latdata.LATArrayOfFourBytes[2]=readEEPROM(disk1,Reepromaddress+8);
-                latdata.LATArrayOfFourBytes[3]=readEEPROM(disk1,Reepromaddress+9);
-                londata.LONArrayOfFourBytes[0]=readEEPROM(disk1,Reepromaddress+10);
-                londata.LONArrayOfFourBytes[1]=readEEPROM(disk1,Reepromaddress+11);
-                londata.LONArrayOfFourBytes[2]=readEEPROM(disk1,Reepromaddress+12);
-                londata.LONArrayOfFourBytes[3]=readEEPROM(disk1,Reepromaddress+13);
-                byte GPSDataCRC=readEEPROM(disk1,Reepromaddress+14);
-
-    
-                Serial.println("Hours;Minutes;Seconds;Day;Moth;Year;LatitudeDegrees;GPSLongitudeDegrees;CRC");
-                Serial.print(gpsdata.GPSHour);
-                Serial.print(";");
-                Serial.print(gpsdata.GPSMinutes);
-                Serial.print(";");
-                Serial.print(gpsdata.GPSSeconds);
-                Serial.print(";");
-                Serial.print(gpsdata.GPSDay);
-                Serial.print(";");
-                Serial.print(gpsdata.GPSMonth);
-                Serial.print(";");
-                Serial.print(gpsdata.GPSYear);
-                Serial.print(";");
-                Serial.print(latdata.GPSLatitudeDegrees);
-                Serial.print(";");
-                Serial.println(londata.GPSLongitudeDegrees);
-                Serial.print(";");
-                Serial.println(GPSDataCRC, HEX);  
-                Serial.print("Calculated CrC is:  ");              
-                Serial.println(i2ccrc8(&gpsdata.GPSHour,15),HEX);               
-
-                Reepromaddress +=GPSpageSize;
-            }
+      R_DataFeeprom();
             
     } else if ( inputString == "R" ) {
 
@@ -487,40 +472,40 @@ void loop()                     // run over and over again
     stringComplete = false; 
   }  
 
-    digitalWrite(Third_ledPin, HIGH);
+    digitalWrite(First_ledPin, HIGH);
     delay(1000);
-    digitalWrite(Third_ledPin, LOW);
+    digitalWrite(First_ledPin, LOW);
 
 }
 
 /******************************************************************/
 // Interrupt is called once a millisecond, looks for any new GPS data, and stores it
-SIGNAL(TIMER0_COMPA_vect) {
-  char c = GPS.read();
+//SIGNAL(TIMER0_COMPA_vect) {
+//  char c = GPS.read();
   // if you want to debug, this is a good time to do it!
-  if (GPSECHO && c) {
-#ifdef UDR0
-    UDR0 = c;  
+//  if (GPSECHO && c) {
+//#ifdef UDR0
+//   UDR0 = c;  
     // writing direct to UDR0 is much much faster than Serial.print 
     // but only one character can be written at a time. 
-#endif
-  }
-}
+//#endif
+//  }
+//}
 
 
-void useInterrupt(boolean v) {
-  if (v) {
+//void useInterrupt(boolean v) {
+//  if (v) {
     // Timer0 is already used for millis() - we'll just interrupt somewhere
     // in the middle and call the "Compare A" function above
-    OCR0A = 0xAF;
-    TIMSK0 |= _BV(OCIE0A);
-    usingInterrupt = true;
-  } else {
+//    OCR0A = 0xAF;
+//    TIMSK0 |= _BV(OCIE0A);
+//    usingInterrupt = true;
+//  } else {
     // do not call the interrupt function COMPA anymore
-    TIMSK0 &= ~_BV(OCIE0A);
-    usingInterrupt = false;
-  }
-}
+//    TIMSK0 &= ~_BV(OCIE0A);
+//    usingInterrupt = false;
+//  }
+//}
 
 
 void writeEEPROM(byte deviceaddress, byte eeaddress, byte data) 
@@ -656,3 +641,122 @@ byte i2ccrc8 (byte* addr, byte len)
   return crc;
 }  // end of crc8
 
+
+extern "C" char *sbrk(int i);
+
+int FreeRam () {
+  char stack_dummy = 0;
+  return &stack_dummy - sbrk(0);
+}
+
+
+boolean W_Date2eeprom() {
+
+  union LATdata latdata;
+  union LONdata londata;
+  GPSdata gpsdata ;
+  SYSdata sysdata ;
+  
+    // turn LED on:
+    digitalWrite(First_ledPin, HIGH);
+    delay(250);  
+
+
+       while (!GPS.parse(GPS.lastNMEA())) { Serial.println("Missed GPS Last NMEA, will try again"); }  // this also sets the newNMEAreceived() flag to false
+            Serial.println("Writting to EEPROM!");
+            
+            gpsdata.GPSHour = GPS.hour;
+            gpsdata.GPSMinutes = GPS.minute;
+            gpsdata.GPSSeconds = GPS.seconds;
+            gpsdata.GPSDay = GPS.day;
+            gpsdata.GPSMonth = GPS.month;
+            gpsdata.GPSYear = GPS.year;
+            latdata.GPSLatitudeDegrees = GPS.latitudeDegrees;
+            londata.GPSLongitudeDegrees = GPS.longitudeDegrees;
+            byte GPSDataCRC=i2ccrc8(&gpsdata.GPSHour,15);
+            
+
+            writeEEPROM(disk1,Weepromaddress+0,gpsdata.GPSHour);
+            writeEEPROM(disk1,Weepromaddress+1,gpsdata.GPSMinutes);
+            writeEEPROM(disk1,Weepromaddress+2,gpsdata.GPSSeconds);
+            writeEEPROM(disk1,Weepromaddress+3,gpsdata.GPSDay);
+            writeEEPROM(disk1,Weepromaddress+4,gpsdata.GPSMonth);
+            writeEEPROM(disk1,Weepromaddress+5,gpsdata.GPSYear);
+            writeEEPROM(disk1,Weepromaddress+6,latdata.LATArrayOfFourBytes[0]);
+            writeEEPROM(disk1,Weepromaddress+7,latdata.LATArrayOfFourBytes[1]);
+            writeEEPROM(disk1,Weepromaddress+8,latdata.LATArrayOfFourBytes[2]);
+            writeEEPROM(disk1,Weepromaddress+9,latdata.LATArrayOfFourBytes[3]);
+            writeEEPROM(disk1,Weepromaddress+10,londata.LONArrayOfFourBytes[0]);
+            writeEEPROM(disk1,Weepromaddress+11,londata.LONArrayOfFourBytes[1]);
+            writeEEPROM(disk1,Weepromaddress+12,londata.LONArrayOfFourBytes[2]);
+            writeEEPROM(disk1,Weepromaddress+13,londata.LONArrayOfFourBytes[3]);
+            writeEEPROM(disk1,Weepromaddress+14,GPSDataCRC);            
+            
+            eepromLastAddress = Weepromaddress;
+
+            // this is incase of power failure or device failure  we know when the last eepro entry was done.
+            sysdata.LastAddress[0] = eepromLastAddress;
+            writeEEPROM(disk1,(eepromSize-eepromreserver)+0,sysdata.SysHour);
+            writeEEPROM(disk1,(eepromSize-eepromreserver)+1,sysdata.SysMinutes);
+            writeEEPROM(disk1,(eepromSize-eepromreserver)+2,sysdata.SysSeconds);
+            writeEEPROM(disk1,(eepromSize-eepromreserver)+3,sysdata.SysDay);
+            writeEEPROM(disk1,(eepromSize-eepromreserver)+4,sysdata.SysMonth);
+            writeEEPROM(disk1,(eepromSize-eepromreserver)+5,sysdata.SysYear);
+            writeEEPROM(disk1,(eepromSize-eepromreserver)+6,sysdata.SysMonth);
+            writeEEPROM(disk1,(eepromSize-eepromreserver)+7,sysdata.LastAddress[0]);
+
+            Weepromaddress +=GPSpageSize;
+
+            digitalWrite(First_ledPin, LOW);
+}
+
+int R_DataFeeprom() {
+
+  union LATdata latdata;
+  union LONdata londata;
+  GPSdata gpsdata ;
+  SYSdata sysdata ;
+
+  while  ( Reepromaddress <= eepromLastAddress ) {
+                gpsdata.GPSHour=readEEPROM(disk1,Reepromaddress+0);
+                gpsdata.GPSMinutes=readEEPROM(disk1,Reepromaddress+1);
+                gpsdata.GPSSeconds=readEEPROM(disk1,Reepromaddress+2);
+                gpsdata.GPSDay=readEEPROM(disk1,Reepromaddress+3);
+                gpsdata.GPSMonth=readEEPROM(disk1,Reepromaddress+4);
+                gpsdata.GPSYear=readEEPROM(disk1,Reepromaddress+5);
+                
+                latdata.LATArrayOfFourBytes[0]=readEEPROM(disk1,Reepromaddress+6);
+                latdata.LATArrayOfFourBytes[1]=readEEPROM(disk1,Reepromaddress+7);
+                latdata.LATArrayOfFourBytes[2]=readEEPROM(disk1,Reepromaddress+8);
+                latdata.LATArrayOfFourBytes[3]=readEEPROM(disk1,Reepromaddress+9);
+                londata.LONArrayOfFourBytes[0]=readEEPROM(disk1,Reepromaddress+10);
+                londata.LONArrayOfFourBytes[1]=readEEPROM(disk1,Reepromaddress+11);
+                londata.LONArrayOfFourBytes[2]=readEEPROM(disk1,Reepromaddress+12);
+                londata.LONArrayOfFourBytes[3]=readEEPROM(disk1,Reepromaddress+13);
+                byte GPSDataCRC=readEEPROM(disk1,Reepromaddress+14);
+
+    
+                Serial.println("Hours;Minutes;Seconds;Day;Moth;Year;LatitudeDegrees;GPSLongitudeDegrees;CRC");
+                Serial.print(gpsdata.GPSHour);
+                Serial.print(";");
+                Serial.print(gpsdata.GPSMinutes);
+                Serial.print(";");
+                Serial.print(gpsdata.GPSSeconds);
+                Serial.print(";");
+                Serial.print(gpsdata.GPSDay);
+                Serial.print(";");
+                Serial.print(gpsdata.GPSMonth);
+                Serial.print(";");
+                Serial.print(gpsdata.GPSYear);
+                Serial.print(";");
+                Serial.print(latdata.GPSLatitudeDegrees);
+                Serial.print(";");
+                Serial.println(londata.GPSLongitudeDegrees);
+                Serial.print(";");
+                Serial.println(GPSDataCRC, HEX);  
+                Serial.print("Calculated CrC is:  ");              
+                Serial.println(i2ccrc8(&gpsdata.GPSHour,15),HEX);               
+
+                Reepromaddress +=GPSpageSize;
+   }
+}            

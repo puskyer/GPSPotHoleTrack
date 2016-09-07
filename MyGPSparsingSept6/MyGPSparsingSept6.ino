@@ -1,6 +1,6 @@
 // Alpha code for GPS modules for pothole tracking.
 //
-//  August 11th 2016
+//  August 15th 2016
 //
 
 /*
@@ -82,14 +82,25 @@ $GPGGA,023900.000,4503.1057,N,07523.7231,W,1,07,1.65,80.6,M,-33.9,M,,*6C
 
 
 #include <Adafruit_GPS.h>
-#include <SoftwareSerial.h>
+// #include <SoftwareSerial.h>
 #include <Wire.h>    
+
+#if defined(ARDUINO_SAMD_ZERO) && defined(SERIAL_PORT_USBVIRTUAL)
+  // Required for Serial on Zero based boards
+  #define Serial SERIAL_PORT_USBVIRTUAL
+#endif
+
+#if !defined(ARDUINO_ARCH_SAM) && !defined(ARDUINO_ARCH_SAMD) && !defined(ESP8266) && !defined(ARDUINO_ARCH_STM32F2)
+ #include <util/delay.h>
+#endif
  
 #define disk1 0x50        //Address of 24C02 eeprom chip
-#define eepromSize 256   //24C02 eeprom chip is 256 bytes or 32 pages  x 8 bytes or 2K bits
+#define eepromSize 255   //24C02 eeprom chip is 256 bytes or 32 pages  x 8 bytes or 2K bits
+#define eepromreserver 10 // reserve 6 bytes for our own use..
 #define GPSpageSize 15  // number of bytes we will use for data structure 
 
-byte eepromaddress = 0;   // points to the address being used
+byte Weepromaddress = 0;   // points to the address being used
+byte Reepromaddress = 0;   // points to the address being used
 byte eepromptr = 0;       // points to the next availble address
 byte eepromLastAddress = 0;  //points to last address written to.
 
@@ -98,53 +109,65 @@ byte eepromLastAddress = 0;  //points to last address written to.
 
 // constants won't change. They're used here to
 // set pin numbers:
-const byte First_buttonPin = 4;     // the number of the pushbutton pin
-const byte First_ledPin = 11;      // the number of the LED pin
-const byte Second_buttonPin = 5;     // the number of the pushbutton pin
-const byte Second_ledPin = 12;      // the number of the LED pin
-const byte Third_buttonPin = 6;     // the number of the pushbutton pin
-const byte Third_ledPin = 13;      // the number of the LED pin
+const byte First_buttonPin = 12;     // the number of the pushbutton pin
+const byte First_ledPin = 13;      // the number of the LED pin
+const byte Second_buttonPin = 11;     // the number of the pushbutton pin
+//const byte Second_ledPin = 12;      // the number of the LED pin
+//const byte Third_buttonPin = 9;     // the number of the pushbutton pin
+//const byte Third_ledPin = 13;      // the number of the LED pin
 
 // variables will change:
 boolean  First_buttonState = false;     // variable for first pushbutton status
 boolean Second_buttonState = false;     // variable for reading the pushbutton status
-boolean Third_buttonState = false;      // variable for reading the pushbutton status
+//boolean Third_buttonState = false;      // variable for reading the pushbutton status
 
 unsigned long StartButtonPress = 0;          // start of button press time
 unsigned long StopButtonPress = 0;           // end of button press time
 unsigned long First_buttonPressDelay = 0;
 
-String inputString = "";         // a string to hold incoming data
+String inputString;         // a string to hold incoming data
 boolean stringComplete = false;  // whether the string is complete
 
 typedef struct {
-    byte myHour;
-    byte myMinutes;
-    byte mySeconds;
-    byte myDay;
-    byte myMonth;
-    byte myYear;
+    byte SysHour;
+    byte SysMinutes;
+    byte SysSeconds;
+    byte SysDay;
+    byte SysMonth;
+    byte SysYear;
+    byte LastAddress[4];
+       
+} SYSdata ;
+
+typedef struct {
+    byte GPSHour;
+    byte GPSMinutes;
+    byte GPSSeconds;
+    byte GPSDay;
+    byte GPSMonth;
+    byte GPSYear;
     byte LATArrayBytes[4];
     byte LONArrayBytes[4];
    
 } GPSdata ;
 
+byte GPSdataCRC;
+
 union LATdata {
-  float myLatitudeDegrees;
+  float GPSLatitudeDegrees;
   byte LATArrayOfFourBytes[4];
 };
 
 union LONdata {
-  float myLongitudeDegrees;
+  float GPSLongitudeDegrees;
   byte LONArrayOfFourBytes[4];
 };
 
 
 // to Compute the MODBUS RTU CRC
-#define UInt16 uint16_t
+//#define UInt16 uint16_t
 // CRC should be DD18
-char *t = (char *)"DEADBEEF";
-
+// char *t = (char *)"DEADBEEF";
 
 // If you're using a GPS module:
 // Connect the GPS Power pin to 5V
@@ -157,44 +180,124 @@ char *t = (char *)"DEADBEEF";
 //   Connect the GPS RX (receive) pin to matching TX1, TX2 or TX3
 // If using software serial, keep this line enabled
 // (you can change the pin numbers to match your wiring):
-SoftwareSerial mySerial(3, 2);
+// SoftwareSerial mySerial(3, 2);
+// Adafruit_GPS GPS(&mySerial);
 
-Adafruit_GPS GPS(&mySerial);
+Adafruit_GPS GPS(&Serial1);
 
 // Set GPSECHO to 'false' to turn off echoing the GPS data to the Serial console
 // Set to 'true' if you want to debug and listen to the raw GPS sentences. 
-#define GPSECHO  false
+#define GPSECHO  true
 
 // this keeps track of whether we're using the interrupt
 // off by default!
-boolean usingInterrupt = false;
-void useInterrupt(boolean); // Func prototype keeps Arduino 0023 happy
+//boolean usingInterrupt = false;
+//void useInterrupt(boolean); // Func prototype keeps Arduino 0023 happy
 
+/*************************************************** 
+  This is a library for our I2C LED Backpacks
+
+  Designed specifically to work with the Adafruit 16x8 LED Matrix backpacks 
+  ----> http://www.adafruit.com/products/2035
+  ----> http://www.adafruit.com/products/2036
+  ----> http://www.adafruit.com/products/2037
+  ----> http://www.adafruit.com/products/2038
+  ----> http://www.adafruit.com/products/2039
+  ----> http://www.adafruit.com/products/2040
+  ----> http://www.adafruit.com/products/2041
+  ----> http://www.adafruit.com/products/2042
+  ----> http://www.adafruit.com/products/2043
+  ----> http://www.adafruit.com/products/2044
+  ----> http://www.adafruit.com/products/2052
+
+  These displays use I2C to communicate, 2 pins are required to 
+  interface. There are multiple selectable I2C addresses. For backpacks
+  with 2 Address Select pins: 0x70, 0x71, 0x72 or 0x73. For backpacks
+  with 3 Address Select pins: 0x70 thru 0x77
+
+  Adafruit invests time and resources providing this open source code, 
+  please support Adafruit and open-source hardware by purchasing 
+  products from Adafruit!
+
+  Written by Limor Fried/Ladyada for Adafruit Industries.  
+  BSD license, all text above must be included in any redistribution
+ ****************************************************/
+
+#include "Adafruit_LEDBackpack.h"
+#include "Adafruit_GFX.h"
+
+Adafruit_8x16matrix matrix = Adafruit_8x16matrix();
+
+static const uint8_t PROGMEM
+  smile_bmp[] =
+  { B00111100,
+    B01000010,
+    B10100101,
+    B10000001,
+    B10100101,
+    B10011001,
+    B01000010,
+    B00111100 },
+  neutral_bmp[] =
+  { B00111100,
+    B01000010,
+    B10100101,
+    B10000001,
+    B10111101,
+    B10000001,
+    B01000010,
+    B00111100 },
+  frown_bmp[] =
+  { B00111100,
+    B01000010,
+    B10100101,
+    B10000001,
+    B10011001,
+    B10100101,
+    B01000010,
+    B00111100 };
 
 void setup()  
 {
 
-  // initialize the LED pin as an output:
-  pinMode(First_ledPin, OUTPUT);
-  pinMode(Second_ledPin, OUTPUT);  
-  pinMode(Third_ledPin, OUTPUT);  
-    
-  // initialize the pushbutton pin as an input:
-  pinMode(First_buttonPin, INPUT);
-  pinMode(Second_buttonPin, INPUT);
-  pinMode(Third_buttonPin, INPUT);
+  matrix.begin(0x70);  // pass in the address
 
-  // set up for eeprom 
-  Wire.begin();  
-  // connect at 115200 so we can read the GPS fast enough and echo without dropping chars
-  // also spit it out
+// reserve 10 bytes for the inputString:
+  inputString.reserve(5);
+
+// initialize the LED pin as an output:
+  pinMode(First_ledPin, OUTPUT);
+//  pinMode(Second_ledPin, OUTPUT);  
+//  pinMode(Third_ledPin, OUTPUT);  
+    
+// initialize the pushbutton pin as an input:
+  pinMode(First_buttonPin, INPUT);
+//  pinMode(Second_buttonPin, INPUT);
+//  pinMode(Third_buttonPin, INPUT);
+  
+// connect at 115200 so we can read the GPS fast enough and echo without dropping chars
+// also spit it out
+// Wait for Mo usb port to switch from bootloader to Serial on the MO ****** CRITICAL TO DO THIS *********
+
+  while ( ! Serial ) { delay ( 1 ); }
   Serial.begin(115200);
 
-    // reserve 10 bytes for the inputString:
-  inputString.reserve(10);
-  
-  delay(250);
-  Serial.println("Gather Location!");
+// set up for eeprom 
+  Wire.begin();  
+
+// read the eeprom to see if this is a restart or if it is the first time
+// if sysdata.LastAddress[0] is zero then this is a first time if a non-zero then it is a restart
+/*  
+  eepromLastAddress = readEEPROM(disk1,(eepromSize-eepromreserver)+7);
+  if ( eepromLastAddress != 0 ) {
+  Weepromaddress = eepromLastAddress ;
+  } else {
+  eepromLastAddress = Weepromaddress ;   
+  }
+*/
+
+// delay(250);
+Serial.println("Gather Location!");
   
   // 9600 NMEA is the default baud rate for Adafruit MTK GPS's- some use 4800
   GPS.begin(9600);
@@ -211,137 +314,76 @@ void setup()
   // the nice thing about this code is you can have a timer0 interrupt go off
   // every 1 millisecond, and read data from the GPS for you. that makes the
   // loop code a heck of a lot easier!
-  useInterrupt(true);
+  //useInterrupt(false);
 
   // Request updates on antenna status, comment out to keep quiet
   // GPS.sendCommand(PGCMD_ANTENNA);
 
-  delay(500);
-  // Ask for firmware version
-  // Serial.println(mySerial.println(PMTK_Q_RELEASE));
+//  delay(500);
 
-  
+// Ask for firmware version
+Serial.println(Serial.println(PMTK_Q_RELEASE));
 
-// Set GPSECHO to 'false' to turn off echoing the GPS data to the Serial console
-// Set to 'true' if you want to debug and listen to the raw GPS sentences
-#define GPSECHO  false
-/*  
+/* 
+
  if (GPS.LOCUS_ReadStatus()) {
-    if (GPS.LOCUS_status) digitalWrite(First_ledPin, HIGH);  // turn LED off:
+  
+      if (GPS.LOCUS_status) digitalWrite(First_ledPin, HIGH);  // turn LED on:
+      if (GPS.LOCUS_status) digitalWrite(First_ledPin, LOW);  // turn LED off
  }
-*/ 
+ */
+
+  void writeEEPROM(byte, byte, byte);
+  byte readEEPROM(int, int);
+  boolean W_Date2eeprom();
+  int R_DataFeeprom();
+  byte i2ccrc8(byte *, byte);
 
 }
 
 void loop()                     // run over and over again
 {
 
-  union LATdata latdata;
-  union LONdata londata;
-  
-  GPSdata gpsdata ;
-  
+Serial.println("Starting Loop");
 
-  void writeEEPROM(byte, byte, byte);
-  byte readEEPROM(int, int);
-  byte i2ccrc8(byte *, byte);
-  
+  matrix.clear();
+  matrix.drawBitmap(0, 0, smile_bmp, 8, 8, LED_ON);
+  matrix.writeDisplay();
+  delay(500);
 
-#define eepromSize 256   //24C02 eeprom chip is 256 bytes or 32 pages  x 8 bytes or 2K bits
-#define GPSpageSize 15  // number of bytes we will use for data structure 
-
-byte eepromaddress = 0;   // points to the address being used
-byte eepromptr = 0;       // points to the next availble address
-byte eepromLastAddress = 0;  //points to last address written to.
-
-  
-      
+      Serial.println("Go here!");
   // check if the pushbutton is pressed.
   // if it is, the buttonState is HIGH:
 
-  if (digitalRead(First_buttonPin) == HIGH) {
+  if (digitalRead(First_buttonPin) == LOW) {
 
-    // turn LED on:
-    digitalWrite(First_ledPin, HIGH);
-    delay(250);
-    
-
-
-       while (!GPS.parse(GPS.lastNMEA())) { Serial.println("Missed GPS Last NMEA, will try again"); }  // this also sets the newNMEAreceived() flag to false
-            Serial.println("Writting to EEPROM!");
-            
-            gpsdata.myHour = GPS.hour;
-            gpsdata.myMinutes = GPS.minute;
-            gpsdata.mySeconds = GPS.seconds;
-            gpsdata.myDay = GPS.day;
-            gpsdata.myMonth = GPS.month;
-            gpsdata.myYear = GPS.year;
-            latdata.myLatitudeDegrees = GPS.latitudeDegrees;
-            londata.myLongitudeDegrees = GPS.longitudeDegrees;
-            Serial.println(i2ccrc8(&gpsdata.myHour,14),HEX);
-            
-
-            writeEEPROM(disk1,eepromaddress+0,gpsdata.myHour);
-            writeEEPROM(disk1,eepromaddress+1,gpsdata.myMinutes);
-            writeEEPROM(disk1,eepromaddress+2,gpsdata.mySeconds);
-            writeEEPROM(disk1,eepromaddress+3,gpsdata.myDay);
-            writeEEPROM(disk1,eepromaddress+4,gpsdata.myMonth);
-            writeEEPROM(disk1,eepromaddress+5,gpsdata.myYear);
-            writeEEPROM(disk1,eepromaddress+6,latdata.LATArrayOfFourBytes[0]);
-            writeEEPROM(disk1,eepromaddress+7,latdata.LATArrayOfFourBytes[1]);
-            writeEEPROM(disk1,eepromaddress+8,latdata.LATArrayOfFourBytes[2]);
-            writeEEPROM(disk1,eepromaddress+9,latdata.LATArrayOfFourBytes[3]);
-            writeEEPROM(disk1,eepromaddress+10,londata.LONArrayOfFourBytes[0]);
-            writeEEPROM(disk1,eepromaddress+11,londata.LONArrayOfFourBytes[1]);
-            writeEEPROM(disk1,eepromaddress+12,londata.LONArrayOfFourBytes[2]);
-            writeEEPROM(disk1,eepromaddress+13,londata.LONArrayOfFourBytes[3]);
-            
-            digitalWrite(First_ledPin, LOW);
-
+      W_Date2eeprom();
+  
   } else if (stringComplete) {
-    if  ( inputString == "Erase" )
+    Serial.print(inputString);
+    if  ( inputString == "E" )
     {
       Serial.println("Erase Command Recieved! This will ERASE the data log stored in the FLASH - Permanently!");
       Serial.println("\nERASING!");
       GPS.sendCommand(PMTK_LOCUS_ERASE_FLASH);
       Serial.println("Erased");
-    } else if ( inputString == "Download" ) {
-
-            gpsdata.myHour=readEEPROM(disk1,0);
-            gpsdata.myMinutes=readEEPROM(disk1,1);
-            gpsdata.mySeconds=readEEPROM(disk1,2);
-            gpsdata.myDay=readEEPROM(disk1,3);
-            gpsdata.myMonth=readEEPROM(disk1,4);
-            gpsdata.myYear=readEEPROM(disk1,5);
+    } else if ( inputString == "D" ) {
+      
+      R_DataFeeprom();
             
-            latdata.LATArrayOfFourBytes[0]=readEEPROM(disk1,6);
-            latdata.LATArrayOfFourBytes[1]=readEEPROM(disk1,7);
-            latdata.LATArrayOfFourBytes[2]=readEEPROM(disk1,8);
-            latdata.LATArrayOfFourBytes[3]=readEEPROM(disk1,9);
-            londata.LONArrayOfFourBytes[0]=readEEPROM(disk1,10);
-            londata.LONArrayOfFourBytes[1]=readEEPROM(disk1,11);
-            londata.LONArrayOfFourBytes[2]=readEEPROM(disk1,12);
-            londata.LONArrayOfFourBytes[3]=readEEPROM(disk1,13);
-            Serial.println(i2ccrc8(&gpsdata.myHour,14),HEX);
+    } else if ( inputString == "R" ) {
 
-            Serial.println("Hours;Minutes;Seconds;Day;Moth;Year;LatitudeDegrees;myLongitudeDegrees");
-            Serial.print(gpsdata.myHour);
-            Serial.print(";");
-            Serial.print(gpsdata.myMinutes);
-            Serial.print(";");
-            Serial.print(gpsdata.mySeconds);
-            Serial.print(";");
-            Serial.print(gpsdata.myDay);
-            Serial.print(";");
-            Serial.print(gpsdata.myMonth);
-            Serial.print(";");
-            Serial.print(gpsdata.myYear);
-            Serial.print(";");
-            Serial.print(latdata.myLatitudeDegrees);
-            Serial.print(";");
-            Serial.println(londata.myLongitudeDegrees);
-            
-    } else if ( inputString == "Status" ) {
+        // the following will zero out the eeprom
+        for (byte i=0; i < eepromSize ; i++) {
+          Serial.print("Writing 0 to Address ");
+          Serial.println(i, HEX);
+          writeEEPROM(disk1,i,0);
+          Serial.print("Reading Address ");
+          Serial.println(i, HEX);
+          Serial.print(readEEPROM(disk1,i), HEX);
+        }
+
+    } else if ( inputString == "S" ) {
       if (GPS.LOCUS_ReadStatus()) {
        Serial.print("\n\nLog #"); 
        Serial.print(GPS.LOCUS_serial, DEC);
@@ -370,9 +412,9 @@ byte eepromLastAddress = 0;  //points to last address written to.
        Serial.print((int)GPS.LOCUS_percent); Serial.print("% Used "); 
        Serial.println();
        
-       digitalWrite(Second_ledPin, LOW);   
+//       digitalWrite(Second_ledPin, LOW);   
       }       
-    } else if ( inputString == "StartLog" ) {
+    } else if ( inputString == "STL" ) {
         if (GPS.LOCUS_ReadStatus()) {
               if (GPS.LOCUS_status)
               {
@@ -382,7 +424,7 @@ byte eepromLastAddress = 0;  //points to last address written to.
               {
                   GPS.LOCUS_StartLogger();
                   // turn LED on:
-                  digitalWrite(First_ledPin, HIGH);
+//                  digitalWrite(First_ledPin, HIGH);
                   Serial.println(" STARTED!");
 
               }
@@ -392,13 +434,13 @@ byte eepromLastAddress = 0;  //points to last address written to.
 
                  Serial.println(" no response :("); 
        }
-     } else if ( inputString == "StopLog" ) {
+     } else if ( inputString == "SL" ) {
        if (GPS.LOCUS_ReadStatus()) {
                if (GPS.LOCUS_status)
               {
                   GPS.LOCUS_StopLogger();
                   // turn LED off:
-                  digitalWrite(First_ledPin, LOW);
+//                  digitalWrite(First_ledPin, LOW);
                   Serial.println("Log Stopped!");
               }
               else
@@ -412,44 +454,57 @@ byte eepromLastAddress = 0;  //points to last address written to.
                  Serial.println(" no response :("); 
        }
     } else {
-      Serial.print("Unknown command!  ");
+      Serial.print("Unknown command! -");
       Serial.println(inputString);
-      Serial.println("command are! Download or Erase or Status");
+      Serial.println();
+      Serial.println("commands are! D (Download)");
+      Serial.println("              E (Erase)");
+      Serial.println("              R (Reset EEprom)");
+      Serial.println("              E (Erase Internal DataLogger Data)");      
+      Serial.println("              S (Status)");
+      Serial.println("              STL (Start Internal DataLogger)");
+      Serial.println("              SL (Stop Internal DataLogger)");
+      
     }
           // clear the string and the flag...
     inputString = "";
     stringComplete = false; 
   }  
+
+    digitalWrite(First_ledPin, HIGH);
+    delay(1000);
+    digitalWrite(First_ledPin, LOW);
+
 }
 
 /******************************************************************/
 // Interrupt is called once a millisecond, looks for any new GPS data, and stores it
-SIGNAL(TIMER0_COMPA_vect) {
-  char c = GPS.read();
+//SIGNAL(TIMER0_COMPA_vect) {
+//  char c = GPS.read();
   // if you want to debug, this is a good time to do it!
-  if (GPSECHO && c) {
-#ifdef UDR0
-    UDR0 = c;  
+//  if (GPSECHO && c) {
+//#ifdef UDR0
+//   UDR0 = c;  
     // writing direct to UDR0 is much much faster than Serial.print 
     // but only one character can be written at a time. 
-#endif
-  }
-}
+//#endif
+//  }
+//}
 
 
-void useInterrupt(boolean v) {
-  if (v) {
+//void useInterrupt(boolean v) {
+//  if (v) {
     // Timer0 is already used for millis() - we'll just interrupt somewhere
     // in the middle and call the "Compare A" function above
-    OCR0A = 0xAF;
-    TIMSK0 |= _BV(OCIE0A);
-    usingInterrupt = true;
-  } else {
+//    OCR0A = 0xAF;
+//    TIMSK0 |= _BV(OCIE0A);
+//    usingInterrupt = true;
+//  } else {
     // do not call the interrupt function COMPA anymore
-    TIMSK0 &= ~_BV(OCIE0A);
-    usingInterrupt = false;
-  }
-}
+//    TIMSK0 &= ~_BV(OCIE0A);
+//    usingInterrupt = false;
+//  }
+//}
 
 
 void writeEEPROM(byte deviceaddress, byte eeaddress, byte data) 
@@ -495,9 +550,10 @@ void serialEvent() {
       stringComplete = true;
     } else {
     // add it to the inputString:
-    inputString += inChar;      
+    inputString += inChar;
     }
   }
+  Serial.println(inputString); 
 }
 
 
@@ -584,3 +640,122 @@ byte i2ccrc8 (byte* addr, byte len)
   return crc;
 }  // end of crc8
 
+
+extern "C" char *sbrk(int i);
+
+int FreeRam () {
+  char stack_dummy = 0;
+  return &stack_dummy - sbrk(0);
+}
+
+
+boolean W_Date2eeprom() {
+
+  union LATdata latdata;
+  union LONdata londata;
+  GPSdata gpsdata ;
+  SYSdata sysdata ;
+  
+    // turn LED on:
+    digitalWrite(First_ledPin, HIGH);
+    delay(250);  
+
+
+       while (!GPS.parse(GPS.lastNMEA())) { Serial.println("Missed GPS Last NMEA, will try again"); }  // this also sets the newNMEAreceived() flag to false
+            Serial.println("Writting to EEPROM!");
+            
+            gpsdata.GPSHour = GPS.hour;
+            gpsdata.GPSMinutes = GPS.minute;
+            gpsdata.GPSSeconds = GPS.seconds;
+            gpsdata.GPSDay = GPS.day;
+            gpsdata.GPSMonth = GPS.month;
+            gpsdata.GPSYear = GPS.year;
+            latdata.GPSLatitudeDegrees = GPS.latitudeDegrees;
+            londata.GPSLongitudeDegrees = GPS.longitudeDegrees;
+            byte GPSDataCRC=i2ccrc8(&gpsdata.GPSHour,15);
+            
+
+            writeEEPROM(disk1,Weepromaddress+0,gpsdata.GPSHour);
+            writeEEPROM(disk1,Weepromaddress+1,gpsdata.GPSMinutes);
+            writeEEPROM(disk1,Weepromaddress+2,gpsdata.GPSSeconds);
+            writeEEPROM(disk1,Weepromaddress+3,gpsdata.GPSDay);
+            writeEEPROM(disk1,Weepromaddress+4,gpsdata.GPSMonth);
+            writeEEPROM(disk1,Weepromaddress+5,gpsdata.GPSYear);
+            writeEEPROM(disk1,Weepromaddress+6,latdata.LATArrayOfFourBytes[0]);
+            writeEEPROM(disk1,Weepromaddress+7,latdata.LATArrayOfFourBytes[1]);
+            writeEEPROM(disk1,Weepromaddress+8,latdata.LATArrayOfFourBytes[2]);
+            writeEEPROM(disk1,Weepromaddress+9,latdata.LATArrayOfFourBytes[3]);
+            writeEEPROM(disk1,Weepromaddress+10,londata.LONArrayOfFourBytes[0]);
+            writeEEPROM(disk1,Weepromaddress+11,londata.LONArrayOfFourBytes[1]);
+            writeEEPROM(disk1,Weepromaddress+12,londata.LONArrayOfFourBytes[2]);
+            writeEEPROM(disk1,Weepromaddress+13,londata.LONArrayOfFourBytes[3]);
+            writeEEPROM(disk1,Weepromaddress+14,GPSDataCRC);            
+            
+            eepromLastAddress = Weepromaddress;
+
+            // this is incase of power failure or device failure  we know when the last eepro entry was done.
+            sysdata.LastAddress[0] = eepromLastAddress;
+            writeEEPROM(disk1,(eepromSize-eepromreserver)+0,sysdata.SysHour);
+            writeEEPROM(disk1,(eepromSize-eepromreserver)+1,sysdata.SysMinutes);
+            writeEEPROM(disk1,(eepromSize-eepromreserver)+2,sysdata.SysSeconds);
+            writeEEPROM(disk1,(eepromSize-eepromreserver)+3,sysdata.SysDay);
+            writeEEPROM(disk1,(eepromSize-eepromreserver)+4,sysdata.SysMonth);
+            writeEEPROM(disk1,(eepromSize-eepromreserver)+5,sysdata.SysYear);
+            writeEEPROM(disk1,(eepromSize-eepromreserver)+6,sysdata.SysMonth);
+            writeEEPROM(disk1,(eepromSize-eepromreserver)+7,sysdata.LastAddress[0]);
+
+            Weepromaddress +=GPSpageSize;
+
+            digitalWrite(First_ledPin, LOW);
+}
+
+int R_DataFeeprom() {
+
+  union LATdata latdata;
+  union LONdata londata;
+  GPSdata gpsdata ;
+  SYSdata sysdata ;
+
+  while  ( Reepromaddress <= eepromLastAddress ) {
+                gpsdata.GPSHour=readEEPROM(disk1,Reepromaddress+0);
+                gpsdata.GPSMinutes=readEEPROM(disk1,Reepromaddress+1);
+                gpsdata.GPSSeconds=readEEPROM(disk1,Reepromaddress+2);
+                gpsdata.GPSDay=readEEPROM(disk1,Reepromaddress+3);
+                gpsdata.GPSMonth=readEEPROM(disk1,Reepromaddress+4);
+                gpsdata.GPSYear=readEEPROM(disk1,Reepromaddress+5);
+                
+                latdata.LATArrayOfFourBytes[0]=readEEPROM(disk1,Reepromaddress+6);
+                latdata.LATArrayOfFourBytes[1]=readEEPROM(disk1,Reepromaddress+7);
+                latdata.LATArrayOfFourBytes[2]=readEEPROM(disk1,Reepromaddress+8);
+                latdata.LATArrayOfFourBytes[3]=readEEPROM(disk1,Reepromaddress+9);
+                londata.LONArrayOfFourBytes[0]=readEEPROM(disk1,Reepromaddress+10);
+                londata.LONArrayOfFourBytes[1]=readEEPROM(disk1,Reepromaddress+11);
+                londata.LONArrayOfFourBytes[2]=readEEPROM(disk1,Reepromaddress+12);
+                londata.LONArrayOfFourBytes[3]=readEEPROM(disk1,Reepromaddress+13);
+                byte GPSDataCRC=readEEPROM(disk1,Reepromaddress+14);
+
+    
+                Serial.println("Hours;Minutes;Seconds;Day;Moth;Year;LatitudeDegrees;GPSLongitudeDegrees;CRC");
+                Serial.print(gpsdata.GPSHour);
+                Serial.print(";");
+                Serial.print(gpsdata.GPSMinutes);
+                Serial.print(";");
+                Serial.print(gpsdata.GPSSeconds);
+                Serial.print(";");
+                Serial.print(gpsdata.GPSDay);
+                Serial.print(";");
+                Serial.print(gpsdata.GPSMonth);
+                Serial.print(";");
+                Serial.print(gpsdata.GPSYear);
+                Serial.print(";");
+                Serial.print(latdata.GPSLatitudeDegrees);
+                Serial.print(";");
+                Serial.println(londata.GPSLongitudeDegrees);
+                Serial.print(";");
+                Serial.println(GPSDataCRC, HEX);  
+                Serial.print("Calculated CrC is:  ");              
+                Serial.println(i2ccrc8(&gpsdata.GPSHour,15),HEX);               
+
+                Reepromaddress +=GPSpageSize;
+   }
+}            
