@@ -62,9 +62,9 @@ union LONdata {
 //   Connect the GPS RX (receive) pin to matching TX1, TX2 or TX3
 // If using software serial, keep this line enabled
 // (you can change the pin numbers to match your wiring):
-SoftwareSerial mySerial(3, 2);
+//SoftwareSerial mySerial(3, 2);
 
-Adafruit_GPS GPS(&mySerial);
+Adafruit_GPS GPS(&Serial1);
 
 // Set GPSECHO to 'false' to turn off echoing the GPS data to the Serial console
 // Set to 'true' if you want to debug and listen to the raw GPS sentences. 

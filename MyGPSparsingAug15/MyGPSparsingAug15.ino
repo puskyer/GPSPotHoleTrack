@@ -478,34 +478,34 @@ Serial.println("Starting Loop");
 
 }
 
-/******************************************************************/
+//******************************************************************/
 // Interrupt is called once a millisecond, looks for any new GPS data, and stores it
-//SIGNAL(TIMER0_COMPA_vect) {
-//  char c = GPS.read();
+SIGNAL(TIMER0_COMPA_vect) {
+  char c = GPS.read();
   // if you want to debug, this is a good time to do it!
-//  if (GPSECHO && c) {
-//#ifdef UDR0
-//   UDR0 = c;  
+  if (GPSECHO && c) {
+#ifdef UDR0
+   UDR0 = c;  
     // writing direct to UDR0 is much much faster than Serial.print 
     // but only one character can be written at a time. 
-//#endif
-//  }
-//}
+#endif
+  }
+}
 
 
-//void useInterrupt(boolean v) {
-//  if (v) {
+void useInterrupt(boolean v) {
+  if (v) {
     // Timer0 is already used for millis() - we'll just interrupt somewhere
     // in the middle and call the "Compare A" function above
-//    OCR0A = 0xAF;
-//    TIMSK0 |= _BV(OCIE0A);
-//    usingInterrupt = true;
-//  } else {
+   OCR0A = 0xAF;
+    TIMSK0 |= _BV(OCIE0A);
+    usingInterrupt = true;
+  } else {
     // do not call the interrupt function COMPA anymore
-//    TIMSK0 &= ~_BV(OCIE0A);
-//    usingInterrupt = false;
-//  }
-//}
+    TIMSK0 &= ~_BV(OCIE0A);
+    usingInterrupt = false;
+  }
+}
 
 
 void writeEEPROM(byte deviceaddress, byte eeaddress, byte data) 
