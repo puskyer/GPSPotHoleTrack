@@ -85,6 +85,7 @@ $GPGGA,023900.000,4503.1057,N,07523.7231,W,1,07,1.65,80.6,M,-33.9,M,,*6C
 #include <Wire.h> 
 #include <Time.h>
 #include <TimeLib.h>
+#include <EnableInterrupt.h>
 
 // Offset hours from gps time (UTC)
 //const int offset = -5;  // Eastern Standard Time (USA)
@@ -215,14 +216,6 @@ int FreeRam () {
   char stack_dummy = 0;
   return &stack_dummy - sbrk(0);
 }
-
-void First_buttonPress() {
-      First_buttonState = true;
-      }
-  
-void Second_buttonPress() {
-      Second_buttonState = true;
-      }
 
 /*
 
@@ -475,6 +468,7 @@ void pciSetup(byte pin)
     PCICR  |= bit (digitalPinToPCICRbit(pin)); // enable interrupt for the group
 }
 
+/*
 ISR(PCINT0_vect)
 {
   // read the state of the pushbutton value:
@@ -482,12 +476,22 @@ ISR(PCINT0_vect)
   digitalWrite(FLORAled, !buttonState);   // turn the LED on/off
 }
 
+*/
+
+void First_buttonPress() {
+      First_buttonState = true;
+      }
+  
+void Second_buttonPress() {
+      Second_buttonState = true;
+      }
+
+
+
 Adafruit_NeoPixel pixels = Adafruit_NeoPixel(NUMPIXELS, NeoPixelPin, NEO_GRB + NEO_KHZ800);
 
 void setup()  
 {
-
-
 
   pixels.begin(); // This initializes the NeoPixel library.
   pixels.show(); // This sends the updated pixel color to the hardware.
@@ -608,6 +612,9 @@ ISR(PCINT0_vect)
 }
 */
 
+void enableInterrupt(uint8_t pinNumber, void (*userFunction)(void), uint8_t mode);
+
+enableInterrupt(First_buttonPin,*First_buttonPress, LOW);
 
   DateTime();
 }

@@ -1,8 +1,7 @@
 // Alpha code for GPS modules for pothole tracking.
 //
-//  August 22th 2016
+//  August 15th 2016
 //
-// put together by Pasquale Riccio
 
 /*
 for NMEA 0183 version 3.00 active the Mode indicator field is added
@@ -82,28 +81,45 @@ $GPGGA,023900.000,4503.1057,N,07523.7231,W,1,07,1.65,80.6,M,-33.9,M,,*6C
 
 
 #include <Adafruit_GPS.h>
+
 #include <Wire.h> 
 #include <Time.h>
 #include <TimeLib.h>
 
 // Offset hours from gps time (UTC)
+//const int offset = 1;   // Central European Time
 //const int offset = -5;  // Eastern Standard Time (USA)
 const int offset = -4;  // Eastern Daylight Time (USA)
 //const int offset = -8;  // Pacific Standard Time (USA)
 //const int offset = -7;  // Pacific Daylight Time (USA)
+
+
       
 #include "Adafruit_FRAM_I2C.h"
 #include <Adafruit_NeoPixel.h>
+#ifdef __AVR__
+  #include <avr/power.h>
+#endif
 
-/* Adafruit I2C FRAM breakout
-   Connect SCL    to analog 5
+#if defined(ARDUINO_SAMD_ZERO) && defined(SERIAL_PORT_USBVIRTUAL)
+  // Required for Serial on Zero based boards
+  #define Serial SERIAL_PORT_USBVIRTUAL
+#endif
+
+#if !defined(ARDUINO_ARCH_SAM) && !defined(ARDUINO_ARCH_SAMD) && !defined(ESP8266) && !defined(ARDUINO_ARCH_STM32F2)
+ #include <util/delay.h>
+#endif
+
+/* Example code for the Adafruit I2C FRAM breakout */
+
+/* Connect SCL    to analog 5
    Connect SDA    to analog 4
    Connect VDD    to 5.0V DC
    Connect GROUND to common ground */
    
-Adafruit_FRAM_I2C fram  = Adafruit_FRAM_I2C();
-#define I2C_framAddr 0x50   //  I2C Address for FRAM chip 
-#define FramSize 32768      // 32K Fram
+Adafruit_FRAM_I2C fram     = Adafruit_FRAM_I2C();
+#define I2C_framAddr 0x50        //I2C Address for eeprom chip 
+#define FramSize 32768  // 32K Fram
 
 /*
 Last 15 bytes are for saving state information
@@ -122,32 +138,34 @@ ReserveFramAddr+7 is sysdata.LastAddress[0]);
 
 uint16_t WrFramAddr = 0;   // points to the address being used
 uint16_t RdFramAddr = 0;   // points to the address being used
-uint16_t NextFramAddr = 0; // points to the next availble address
-uint16_t LastFramAddr = 0; //points to last address written to.
+uint16_t NextFramAddr = 0;       // points to the next availble address
+uint16_t LastFramAddr = 0;  //points to last address written to.
 
 // turn on GGA only
 #define PMTK_SET_NMEA_OUTPUT_GGA "$PMTK314,0,0,0,1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0*29"
 
 // constants won't change. They're used here to
-
 // set pin numbers:
-const int First_buttonPin = 9;     // the number of the pushbutton pin
-const int Second_buttonPin = 10;   // the number of the pushbutton pin
-const int NeoPixelPin = 8;         // the number of the LED pin
-const int FLORAled = 7;            // Pin D7 has an LED connected on FLORA. give it a name:
+const byte First_buttonPin = 9;     // the number of the pushbutton pin
+const byte Second_buttonPin = 10;     // the number of the pushbutton pin
+const byte NeoPixelPin = 8;      // the number of the LED pin
+// Pin D7 has an LED connected on FLORA. give it a name:
+int FLORAled = 7;
 
-#define NUMPIXELS  1           // How many NeoPixels are attached
+// How many NeoPixels are attached to the Arduino?
+#define NUMPIXELS      1
 
 // variables will change:
 volatile boolean First_buttonState = false;     // variable for first pushbutton status
-volatile boolean Second_buttonState = false;    // variable for reading the pushbutton status
+volatile boolean Second_buttonState = false;     // variable for reading the pushbutton status
 volatile int buttonState;
-unsigned long StartButtonPress = 0;             // start of button press time
-unsigned long StopButtonPress = 0;              // end of button press time
+
+unsigned long StartButtonPress = 0;          // start of button press time
+unsigned long StopButtonPress = 0;           // end of button press time
 unsigned long First_buttonPressDelay = 0;
 
-String inputString;                            // a string to hold incoming data
-boolean stringComplete = false;                // whether the string is complete
+String inputString;         // a string to hold incoming data
+boolean stringComplete = false;  // whether the string is complete
 
 typedef struct {
     byte SysHour;
@@ -186,12 +204,22 @@ union LONdata {
 
 SYSdata sysdata ;
 
-// For the GPS module:
+// If you're using a GPS module:
 // Connect the GPS Power pin to 5V
 // Connect the GPS Ground pin to ground
+// If using software serial (sketch example default):
 //   Connect the GPS TX (transmit) pin to Digital 3
 //   Connect the GPS RX (receive) pin to Digital 2
-//  We are using the hardware serial port?
+// If using hardware serial (e.g. Arduino Mega):
+//   Connect the GPS TX (transmit) pin to Arduino RX1, RX2 or RX3
+//   Connect the GPS RX (receive) pin to matching TX1, TX2 or TX3
+// If using software serial, keep this line enabled
+// (you can change the pin numbers to match your wiring):
+// SoftwareSerial mySerial(3, 2);
+// Adafruit_GPS GPS(&mySerial);
+
+
+// what's the name of the hardware serial port?
 #define GPSSerial Serial1
 
 // Connect to the GPS on the hardware port
@@ -203,11 +231,44 @@ Adafruit_GPS GPS(&GPSSerial);
 
 // this keeps track of whether we're using the interrupt
 // off by default!
-//boolean usingInterrupt = false;
-//void useInterrupt(boolean); // Func prototype keeps Arduino 0023 happy
+boolean usingInterrupt = false;
+void useInterrupt(boolean); // Func prototype keeps Arduino 0023 happy
 
+#include "Adafruit_LEDBackpack.h"
+#include "Adafruit_GFX.h"
 
+Adafruit_8x16matrix matrix = Adafruit_8x16matrix();
 
+static const uint8_t PROGMEM
+  smile_bmp[] =
+  { B00111100,
+    B01000010,
+    B10100101,
+    B10000001,
+    B10100101,
+    B10011001,
+    B01000010,
+    B00111100 },
+  neutral_bmp[] =
+  { B00111100,
+    B01000010,
+    B10100101,
+    B10000001,
+    B10111101,
+    B10000001,
+    B01000010,
+    B00111100 },
+  frown_bmp[] =
+  { B00111100,
+    B01000010,
+    B10100101,
+    B10000001,
+    B10011001,
+    B10100101,
+    B01000010,
+    B00111100 };
+
+Adafruit_NeoPixel pixels = Adafruit_NeoPixel(NUMPIXELS, NeoPixelPin, NEO_GRB + NEO_KHZ800);
 
 extern "C" char *sbrk(int i);
 
@@ -224,10 +285,11 @@ void Second_buttonPress() {
       Second_buttonState = true;
       }
 
-/*
+
 
 #if not defined(ARDUINO_SAMD_ZERO) && not defined(SERIAL_PORT_USBVIRTUAL)
   // Required for Serial on Zero based boards
+/******************************************************************/
 // Interrupt is called once a millisecond, looks for any new GPS data, and stores it
 SIGNAL(TIMER0_COMPA_vect) {
   char c = GPS.read();
@@ -253,7 +315,7 @@ void useInterrupt(boolean v) {
 
 #endif
 
- */
+
 
 void serialEventRun(void) {
   if (Serial.available()) serialEvent();
@@ -299,6 +361,14 @@ byte i2ccrc8 (byte* addr, byte len)
     }  // end of while
   return crc;
 }  // end of crc8
+
+
+//extern "C" char *sbrk(int i);
+
+//int FreeRam () {
+//  char stack_dummy = 0;
+ // return &stack_dummy - sbrk(0);
+//}
 
 
 void W_Date2eeprom() {
@@ -468,6 +538,9 @@ void DateTime() {
     Serial.println(second());    
 }
 
+
+
+
 void pciSetup(byte pin)
 {
     *digitalPinToPCMSK(pin) |= bit (digitalPinToPCMSKbit(pin));  // enable pin
@@ -475,22 +548,22 @@ void pciSetup(byte pin)
     PCICR  |= bit (digitalPinToPCICRbit(pin)); // enable interrupt for the group
 }
 
+/*
 ISR(PCINT0_vect)
 {
   // read the state of the pushbutton value:
   int buttonState = (digitalRead(First_buttonPin) && digitalRead(Second_buttonPin));
   digitalWrite(FLORAled, !buttonState);   // turn the LED on/off
 }
-
-Adafruit_NeoPixel pixels = Adafruit_NeoPixel(NUMPIXELS, NeoPixelPin, NEO_GRB + NEO_KHZ800);
+*/
 
 void setup()  
 {
 
-
-
+//  matrix.begin(0x70);  // pass in the address
   pixels.begin(); // This initializes the NeoPixel library.
-  pixels.show(); // This sends the updated pixel color to the hardware.
+
+//  pixels.show(); // This sends the updated pixel color to the hardware.
 
 // reserve 10 bytes for the inputString:
   inputString.reserve(5);
@@ -533,6 +606,7 @@ void setup()
 // Ask for firmware version
 Serial.println(GPSSerial.print(PMTK_Q_RELEASE));
 
+
 // read the eeprom to see if this is a restart or if it is the first time
 // if sysdata.LastAddress[0] is zero then this is a first time if a non-zero then it is a restart
 
@@ -563,6 +637,7 @@ Serial.println(LastFramAddr, DEC);
     setTime(GPS.hour,GPS.minute,GPS.seconds,GPS.day,GPS.month,GPS.year);
     adjustTime(offset * SECS_PER_HOUR);
 
+
 /*
 Pin Change Mask Register 0 – PCMSK0
 
@@ -575,38 +650,12 @@ PCINT7..0 is cleared, pin change interrupt on the corresponding I/O pin is disab
 */
 
     PCMSK0 |= _BV(PCINT5) | _BV(PCINT6);    //select Pin-Change Interrupt 6 on Port B
-    PCIFR |= _BV(PCIF0);                    //Clear any pending pin-change interrupts
-    PCICR |= _BV(PCIE0);                    //Enable pin-change interrupt
+    PCIFR |= _BV(PCIF0);          //Clear any pending pin-change interrupts
+    PCICR |= _BV(PCIE0);          //Enable pin-change interrupt
 
 //    pciSetup(9);
 //    pciSetup(10);
 
-/*
-// There are three interrupt vectors:
-ISR(PCINT0_vect){} // for pins PCINT0-PCINT7   (PB0-PB7)  
-ISR(PCINT1_vect){} // for pins PCINT8-PCINT14  (PC0-PC6)
-ISR(PCINT2_vect){} // for pins PCINT16-PCINT23 (PD0-PD7)
-
-//you want interrupt on pins PB0, PB1 (PCINT0, PCINT1)
-//both pins belong to vector PCINT0_vect
-
-//so enable PCINT0 interrupt
-   PCICR |= (1 << PCIE0); 
-
-//choose pins for interrupt 
-   PCMSK0 = (1<<PCINT0)|(1<<PCINT1); //pins PB0, PB1
-
-//if you want to know which pin caused interrupt
-//you have to test it.
-
-//For example
-//if rising edge came from PB1, switch Led on.
-ISR(PCINT0_vect)
-{
-   if(PINB & PB1)  //if PB1 high
-   PORTC |= (1
-}
-*/
 
 
   DateTime();
@@ -727,7 +776,4 @@ void loop()                     // run over and over again
     stringComplete = false; 
   }  
 }
-
-
-
 
