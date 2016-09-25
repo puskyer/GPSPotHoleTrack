@@ -85,7 +85,7 @@ $GPGGA,023900.000,4503.1057,N,07523.7231,W,1,07,1.65,80.6,M,-33.9,M,,*6C
 #include <Wire.h> 
 #include <Time.h>
 #include <TimeLib.h>
-#include <EnableInterrupt.h>
+//#include <EnableInterrupt.h>
 
 // Offset hours from gps time (UTC)
 //const int offset = -5;  // Eastern Standard Time (USA)
@@ -204,8 +204,8 @@ Adafruit_GPS GPS(&GPSSerial);
 
 // this keeps track of whether we're using the interrupt
 // off by default!
-//boolean usingInterrupt = false;
-//void useInterrupt(boolean); // Func prototype keeps Arduino 0023 happy
+boolean usingInterrupt = false;
+void useInterrupt(boolean); // Func prototype keeps Arduino 0023 happy
 
 
 
@@ -217,36 +217,6 @@ int FreeRam () {
   return &stack_dummy - sbrk(0);
 }
 
-/*
-
-#if not defined(ARDUINO_SAMD_ZERO) && not defined(SERIAL_PORT_USBVIRTUAL)
-  // Required for Serial on Zero based boards
-// Interrupt is called once a millisecond, looks for any new GPS data, and stores it
-SIGNAL(TIMER0_COMPA_vect) {
-  char c = GPS.read();
-  // if you want to debug, this is a good time to do it!
-  if (GPSECHO && c) {
-     if (c) Serial.print(c);  
-  }
-}
-
-void useInterrupt(boolean v) {
-  if (v) {
-    // Timer0 is already used for millis() - we'll just interrupt somewhere
-    // in the middle and call the "Compare A" function above
-    OCR0A = 0xAF;
-    TIMSK0 |= _BV(OCIE0A);
-    usingInterrupt = true;
-  } else {
-    // do not call the interrupt function COMPA anymore
-    TIMSK0 &= ~_BV(OCIE0A);
-    usingInterrupt = false;
-  }
-}
-
-#endif
-
- */
 
 void serialEventRun(void) {
   if (Serial.available()) serialEvent();
@@ -260,7 +230,6 @@ void serialEventRun(void) {
  */
 void serialEvent() {
   while (Serial.available()) {
-    Serial.print("Here!");
     // get the new byte:
     char inChar = (char)Serial.read();
     // if the incoming character is a newline, set a flag
@@ -309,8 +278,8 @@ void W_Date2eeprom() {
             if (c) Serial.print(c);
           }
 
-            Serial.println("Start writting to EEPROM!");
-            
+            Serial.print("Start writting to FRAM at Address! ");
+            Serial.println(WrFramAddr, DEC);                
             gpsdata.GPSHour = GPS.hour;
             gpsdata.GPSMinutes = GPS.minute;
             gpsdata.GPSSeconds = GPS.seconds;
@@ -338,9 +307,9 @@ void W_Date2eeprom() {
                 Serial.print(";");
                 Serial.println(londata.GPSLongitudeDegrees);
                 Serial.print(";");
-                Serial.println(GPSDataCRC, HEX);  
+                Serial.println(GPSDataCRC, DEC);  
                 Serial.print("Calculated CrC is:  ");              
-                Serial.println(i2ccrc8(&gpsdata.GPSHour,15),HEX);
+                Serial.println(i2ccrc8(&gpsdata.GPSHour,15),DEC);
                 Serial.println();   
 
             
@@ -378,7 +347,8 @@ void W_Date2eeprom() {
             fram.write8((FramSize-ReserveFramAddr)+10,sysdata.LastAddress[3]);
             
             WrFramAddr +=GPSpageSize;
-            Serial.println("Finish writting to EEPROM!");
+            Serial.print("Finish writting to FRAM next address will be! ");
+            Serial.println(WrFramAddr, DEC);    
 }
 
 void R_DataFeeprom() {
@@ -387,6 +357,12 @@ void R_DataFeeprom() {
   union LONdata londata;
   GPSdata gpsdata ;
 //  SYSdata sysdata ;
+  RdFramAddr = 0;
+
+      Serial.print("Dumpingt from FRAM address! ");
+      Serial.println(0x0, DEC);    
+      Serial.print("Dumpingt from FRAM address! ");
+      Serial.println(LastFramAddr, DEC);      
 
   while  (RdFramAddr <= LastFramAddr) {
                 gpsdata.GPSHour=fram.read8(RdFramAddr+0);
@@ -424,9 +400,9 @@ void R_DataFeeprom() {
                 Serial.print(";");
                 Serial.println(londata.GPSLongitudeDegrees);
                 Serial.print(";");
-                Serial.println(GPSDataCRC, HEX);  
+                Serial.println(GPSDataCRC, DEC);  
                 Serial.print("Calculated CrC is:  ");              
-                Serial.println(i2ccrc8(&gpsdata.GPSHour,15),HEX);               
+                Serial.println(i2ccrc8(&gpsdata.GPSHour,15),DEC);               
 
                 RdFramAddr +=GPSpageSize;
    }
@@ -468,25 +444,108 @@ void pciSetup(byte pin)
     PCICR  |= bit (digitalPinToPCICRbit(pin)); // enable interrupt for the group
 }
 
+
 /*
-ISR(PCINT0_vect)
+buttonpress() debounces a pushbutton and returns
+  0 if the button was not depressed,
+  1 if a short button press was detected, or
+  2 if a long button press was detected
+
+int buttonpress() 
 {
-  // read the state of the pushbutton value:
-  int buttonState = (digitalRead(First_buttonPin) && digitalRead(Second_buttonPin));
-  digitalWrite(FLORAled, !buttonState);   // turn the LED on/off
+  #define debounceDelay 50
+  #define longPressTime 1000
+  
+  int retVal = 0;
+  static int button;
+  static int lastButtonState = HIGH;
+  static int buttonState = HIGH;
+  static long lastDebounceTime;
+  static long buttonPressStartTime;
+  
+  button = digitalRead(buttonPin);  // read the button pin
+  if (button != lastButtonState)   // if the button changed
+  {
+    lastDebounceTime = millis();   // reset the debounce timer
+  }  
+  if ((millis() - lastDebounceTime) > debounceDelay)  // check if button has been stable for debounceDelay mS
+  {
+    if (button != buttonState)      // this starts the processing of a debounced state change
+    {
+      buttonState = button;
+      if (buttonState == HIGH) // the button has just been released
+      {
+        if (millis() - buttonPressStartTime >= longPressTime) 
+        { 
+          retVal = 2;  // a long press has been detected
+        }
+        else 
+        {
+          retVal = 1;  // otherwise it was a short press
+        }
+      }
+      else   // the button has just been pressed
+      {
+        buttonPressStartTime = millis();  // start timing how long the button is depressed
+      }
+    }    
+  }  // This ends processing of a debounced state change
+  lastButtonState = button;
+  return(retVal);
 }
 
 */
 
-void First_buttonPress() {
-      First_buttonState = true;
-      }
-  
-void Second_buttonPress() {
-      Second_buttonState = true;
-      }
+
+ISR(PCINT0_vect)
+{
+
+#define debounceDelay 50
+#define longPressTime 1000
+int retVal = 0;
+static int button;
+static int lastButtonState = HIGH;
+static int buttonState = HIGH;
+static long lastDebounceTime;
+static long buttonPressStartTime;
 
 
+  // read the state of the pushbutton value:
+  int First_buttonState = digitalRead(First_buttonPin);
+  if (First_buttonState == HIGH) { button = First_buttonState; }
+        
+  int Second_buttonState = digitalRead(Second_buttonPin);
+  if (Second_buttonState == HIGH) { button = Second_buttonState; }
+    
+  if (button != lastButtonState)    // if the button changed
+  {
+    lastDebounceTime = millis();   // reset the debounce timer
+  }  
+  if ((millis() - lastDebounceTime) > debounceDelay)  // check if button has been stable for debounceDelay mS
+  {
+    if (button != buttonState)   // this starts the processing of a debounced state change
+    {
+      buttonState = button;
+      if (buttonState == HIGH) // the button has just been released
+      {
+        if (millis() - buttonPressStartTime >= longPressTime) 
+        { 
+          retVal = 2;  // a long press has been detected
+        }
+        else 
+        {
+          retVal = 1;  // otherwise it was a short press
+        }
+      }
+      else   // the button has just been pressed
+      {
+        buttonPressStartTime = millis();  // start timing how long the button is depressed
+      }
+    }    
+  }  // This ends processing of a debounced state change
+  lastButtonState = button;
+  digitalWrite(FLORAled,button);
+}
 
 Adafruit_NeoPixel pixels = Adafruit_NeoPixel(NUMPIXELS, NeoPixelPin, NEO_GRB + NEO_KHZ800);
 
@@ -505,9 +564,6 @@ void setup()
 // initialize the pushbutton pin as an input:
   pinMode(First_buttonPin, INPUT_PULLUP);
   pinMode(Second_buttonPin, INPUT_PULLUP);
-
-  attachInterrupt(First_buttonPin, First_buttonPress, LOW);
-  attachInterrupt(Second_buttonPin, Second_buttonPress, LOW);
   
 // connect at 115200 so we can read the GPS fast enough and echo without dropping chars
 // also spit it out
@@ -576,6 +632,11 @@ bit7   bit6   bit5   bit4   bit3   bit2   bit1   bit0
 Each PCINT7..0 bit selects whether pin change interrupt is enabled on the corresponding I/O pin. If PCINT7..0
 is set and the PCIE0 bit in PCICR is set, pin change interrupt is enabled on the corresponding I/O pin. If
 PCINT7..0 is cleared, pin change interrupt on the corresponding I/O pin is disabled.
+
+// There are three interrupt vectors:
+//ISR(PCINT0_vect){} // for pins PCINT0-PCINT7   (PB0-PB7)  
+//ISR(PCINT1_vect){} // for pins PCINT8-PCINT14  (PC0-PC6)
+//ISR(PCINT2_vect){} // for pins PCINT16-PCINT23 (PD0-PD7)
 */
 
     PCMSK0 |= _BV(PCINT5) | _BV(PCINT6);    //select Pin-Change Interrupt 6 on Port B
@@ -585,43 +646,15 @@ PCINT7..0 is cleared, pin change interrupt on the corresponding I/O pin is disab
 //    pciSetup(9);
 //    pciSetup(10);
 
-/*
-// There are three interrupt vectors:
-ISR(PCINT0_vect){} // for pins PCINT0-PCINT7   (PB0-PB7)  
-ISR(PCINT1_vect){} // for pins PCINT8-PCINT14  (PC0-PC6)
-ISR(PCINT2_vect){} // for pins PCINT16-PCINT23 (PD0-PD7)
-
-//you want interrupt on pins PB0, PB1 (PCINT0, PCINT1)
-//both pins belong to vector PCINT0_vect
-
-//so enable PCINT0 interrupt
-   PCICR |= (1 << PCIE0); 
-
-//choose pins for interrupt 
-   PCMSK0 = (1<<PCINT0)|(1<<PCINT1); //pins PB0, PB1
-
-//if you want to know which pin caused interrupt
-//you have to test it.
-
-//For example
-//if rising edge came from PB1, switch Led on.
-ISR(PCINT0_vect)
-{
-   if(PINB & PB1)  //if PB1 high
-   PORTC |= (1
-}
-*/
-
-void enableInterrupt(uint8_t pinNumber, void (*userFunction)(void), uint8_t mode);
-
-enableInterrupt(First_buttonPin,*First_buttonPress, LOW);
+  digitalWrite(FLORAled, LOW);
 
   DateTime();
 }
 
-
 void loop()                     // run over and over again
 {
+
+//Serial.println("Start Loop");
 
 //  boolean W_Date2eeprom();
   int R_DataFeeprom();
@@ -629,15 +662,23 @@ void loop()                     // run over and over again
   // check if the pushbutton is pressed.
   // if it is, the buttonState is true:
 
-
-  if (First_buttonState) {
-      delay(250);
+//      Serial.println();
+//     Serial.println(First_buttonState);
+//      Serial.println();      
+//      Serial.println(Second_buttonState);
+//      Serial.println();     
+  
+  if (First_buttonState == HIGH) {
+      First_buttonState != First_buttonState;
         // pixels.Color takes RGB values, from 0,0,0 up to 255,255,255
       pixels.setPixelColor(NUMPIXELS, pixels.Color(0,150,0)); // Moderately bright green color.
       pixels.show(); // This sends the updated pixel color to the hardware
+      delay(250);
+      Serial.print("Fram Address to be writtent to is!  ");
+      Serial.println(WrFramAddr, DEC);     
       W_Date2eeprom();
-      First_buttonState = false;
-  } 
+
+  }   
 
    /*
       0x0a (ASCII newline)
@@ -647,27 +688,21 @@ void loop()                     // run over and over again
     
 //char c;
   
-  if (Second_buttonState) {
-          Second_buttonState = false;
-/*
-      matrix.clear();
-      matrix.drawBitmap(0, 0, smile_bmp, 8, 8, LED_ON);
-      matrix.writeDisplay();
-      delay(250);
-      matrix.clear();
-      matrix.drawBitmap(8, 8, frown_bmp, 8, 16, LED_ON);
-      matrix.writeDisplay();
-
-*/  
-         // pixels.Color takes RGB values, from 0,0,0 up to 255,255,255
-      pixels.setPixelColor(NUMPIXELS, pixels.Color(0,150,0)); // Moderately bright green color.
+  if (Second_buttonState == HIGH) {
+      Second_buttonState != Second_buttonState;
+      // pixels.Color takes RGB values, from 0,0,0 up to 255,255,255
+      pixels.setPixelColor(NUMPIXELS, pixels.Color(0,100,0)); // Moderately bright green color.
       pixels.show(); // This sends the updated pixel color to the hardware.
       delay (250);
-      Serial.println("Removing last GPS Entry! ");
+      Serial.print("Removing last GPS Entry at FRAM address! ");
+      Serial.println(WrFramAddr, DEC);    
       WrFramAddr = LastFramAddr;
+      LastFramAddr = WrFramAddr - GPSpageSize;
       // this is incase of power failure or device failure  we know when the last eepro entry was done.
       sysdata.LastAddress[0] = LastFramAddr;
       fram.write8((FramSize-ReserveFramAddr)+7,sysdata.LastAddress[0]);
+      Serial.print("We are at FRAM address! ");
+      Serial.println(WrFramAddr, DEC);    
   }
   
   if (stringComplete) {
@@ -683,17 +718,27 @@ void loop()                     // run over and over again
             fram.write8((FramSize-ReserveFramAddr)+8,0);
             fram.write8((FramSize-ReserveFramAddr)+9,0);
             fram.write8((FramSize-ReserveFramAddr)+10,0);
-            
-            DateTime();
-            Serial.print("Zero out the FRAM!");          
-            // the following will zero out the eeprom
-            for (unsigned int i=0; i < FramSize ; i++) {
-              fram.write8(i,0);
-              if (fram.read8(i) != 0) Serial.println("Memory Error!");;
-            }
+            Serial.println();
 
-            DateTime();
-            Serial.print("FRAM as been Erased!");
+            if (WrFramAddr != 0) {
+                DateTime();
+                Serial.print("Zero out the FRAM up to Last address Write!  ");
+                Serial.println(WrFramAddr, DEC);
+                // the following will zero out the eeprom
+                for (unsigned int i=0; i < WrFramAddr ; i++) {
+                  fram.write8(i,0);
+                  Serial.print("Erased FRAM Address!  ");
+                  Serial.println(i, DEC);              
+                  if (fram.read8(i) != 0) Serial.println("Memory Error!");;
+                }
+    
+                DateTime();
+                Serial.print("FRAM has been Erased!");
+            } else {
+                DateTime();
+                Serial.print("Adddress is already at ");
+                Serial.println(WrFramAddr, DEC);               
+            }
             
         } else if ( inputString == "S" ) {
     
