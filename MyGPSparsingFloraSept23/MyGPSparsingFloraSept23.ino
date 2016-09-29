@@ -119,7 +119,7 @@ ReserveFramAddr+6 is sysdata.SysMonth);
 ReserveFramAddr+7 is sysdata.LastAddress[0]);
 */
 #define ReserveFramAddr 15 // reserve 15 bytes for our own use..
-#define GPSpageSize 15  // number of bytes we will use for data structure 
+#define GPSpageSize 16  // number of bytes we will use for data structure 
 
 uint16_t WrFramAddr = 0;   // points to the address being used
 uint16_t RdFramAddr = 0;   // points to the address being used
@@ -173,7 +173,11 @@ typedef struct {
    
 } GPSdata ;
 
-byte GPSdataCRC;
+union CRCdata {
+  word  GPSDataCRC;
+  byte GPSArrayCRC[2];  
+};
+
 
 union LATdata {
   float GPSLatitudeDegrees;
@@ -267,6 +271,7 @@ void W_Date2eeprom() {
 
   union LATdata latdata;
   union LONdata londata;
+  union CRCdata crcdata;
   GPSdata gpsdata ;
  // SYSdata sysdata ;
 
@@ -279,7 +284,7 @@ void W_Date2eeprom() {
           }
 
             Serial.print("Start writting to FRAM at Address! ");
-            Serial.println(WrFramAddr, DEC);                
+            Serial.println(WrFramAddr, DEC);            
             gpsdata.GPSHour = GPS.hour;
             gpsdata.GPSMinutes = GPS.minute;
             gpsdata.GPSSeconds = GPS.seconds;
@@ -288,9 +293,9 @@ void W_Date2eeprom() {
             gpsdata.GPSYear = GPS.year;
             latdata.GPSLatitudeDegrees = GPS.latitudeDegrees;
             londata.GPSLongitudeDegrees = GPS.longitudeDegrees;
-            byte GPSDataCRC=i2ccrc8(&gpsdata.GPSHour,15);
-
-                Serial.println("Hours;Minutes;Seconds;Day;Moth;Year;LatitudeDegrees;GPSLongitudeDegrees;CRC");
+            crcdata.GPSDataCRC=i2ccrc8(&gpsdata.GPSHour,14);
+/*
+                Serial.println("Hours;Minutes;Seconds;Day;Moth;Year;LatitudeDegrees;GPSLongitudeDegrees;CRC;Calculated CrC");
                 Serial.print(gpsdata.GPSHour);
                 Serial.print(";");
                 Serial.print(gpsdata.GPSMinutes);
@@ -305,15 +310,12 @@ void W_Date2eeprom() {
                 Serial.print(";");
                 Serial.print(latdata.GPSLatitudeDegrees);
                 Serial.print(";");
-                Serial.println(londata.GPSLongitudeDegrees);
+                Serial.print(londata.GPSLongitudeDegrees);
                 Serial.print(";");
-                Serial.println(GPSDataCRC, DEC);  
-                Serial.print("Calculated CrC is:  ");              
-                Serial.println(i2ccrc8(&gpsdata.GPSHour,15),DEC);
-                Serial.println();   
-
-            
-
+                Serial.print(GPSDataCRC, DEC);
+                Serial.print(";");
+                Serial.println(i2ccrc8(&gpsdata.GPSHour,14),DEC);            
+*/
             fram.write8(WrFramAddr+0,gpsdata.GPSHour);
             fram.write8(WrFramAddr+1,gpsdata.GPSMinutes);
             fram.write8(WrFramAddr+2,gpsdata.GPSSeconds);
@@ -328,7 +330,8 @@ void W_Date2eeprom() {
             fram.write8(WrFramAddr+11,londata.LONArrayOfFourBytes[1]);
             fram.write8(WrFramAddr+12,londata.LONArrayOfFourBytes[2]);
             fram.write8(WrFramAddr+13,londata.LONArrayOfFourBytes[3]);
-            fram.write8(WrFramAddr+14,GPSDataCRC);            
+            fram.write8(WrFramAddr+14,crcdata.GPSArrayCRC[0]);             
+            fram.write8(WrFramAddr+15,crcdata.GPSArrayCRC[1]);            
             
             LastFramAddr = WrFramAddr;
 
@@ -355,7 +358,8 @@ void R_DataFeeprom() {
 
   union LATdata latdata;
   union LONdata londata;
-  GPSdata gpsdata ;
+  union CRCdata crcdata;
+  GPSdata gpsdata;
 //  SYSdata sysdata ;
   RdFramAddr = 0;
 
@@ -363,7 +367,7 @@ void R_DataFeeprom() {
       Serial.println(0x0, DEC);    
       Serial.print("Dumpingt from FRAM address! ");
       Serial.println(LastFramAddr, DEC);      
-
+      Serial.println("Hours;Minutes;Seconds;Day;Moth;Year;LatitudeDegrees;GPSLongitudeDegrees;CRC;Calculated CrC");
   while  (RdFramAddr <= LastFramAddr) {
                 gpsdata.GPSHour=fram.read8(RdFramAddr+0);
                 gpsdata.GPSMinutes=fram.read8(RdFramAddr+1);
@@ -380,10 +384,9 @@ void R_DataFeeprom() {
                 londata.LONArrayOfFourBytes[1]=fram.read8(RdFramAddr+11);
                 londata.LONArrayOfFourBytes[2]=fram.read8(RdFramAddr+12);
                 londata.LONArrayOfFourBytes[3]=fram.read8(RdFramAddr+13);
-                byte GPSDataCRC=fram.read8(RdFramAddr+14);
-
-    
-                Serial.println("Hours;Minutes;Seconds;Day;Moth;Year;LatitudeDegrees;GPSLongitudeDegrees;CRC");
+                crcdata.GPSArrayCRC[0]=fram.read8(RdFramAddr+14);
+                crcdata.GPSArrayCRC[1]=fram.read8(RdFramAddr+15);
+ 
                 Serial.print(gpsdata.GPSHour);
                 Serial.print(";");
                 Serial.print(gpsdata.GPSMinutes);
@@ -398,11 +401,11 @@ void R_DataFeeprom() {
                 Serial.print(";");
                 Serial.print(latdata.GPSLatitudeDegrees);
                 Serial.print(";");
-                Serial.println(londata.GPSLongitudeDegrees);
+                Serial.print(londata.GPSLongitudeDegrees);
                 Serial.print(";");
-                Serial.println(GPSDataCRC, DEC);  
-                Serial.print("Calculated CrC is:  ");              
-                Serial.println(i2ccrc8(&gpsdata.GPSHour,15),DEC);               
+                Serial.print(crcdata.GPSDataCRC, DEC);
+                Serial.print(";");           
+                Serial.println(i2ccrc8(&gpsdata.GPSHour,14),DEC);               
 
                 RdFramAddr +=GPSpageSize;
    }
@@ -494,14 +497,9 @@ int buttonpress()
   return(retVal);
 }
 
-*/
-
-
-ISR(PCINT0_vect)
-{
-
 #define debounceDelay 50
 #define longPressTime 1000
+
 int retVal = 0;
 static int button;
 static int lastButtonState = HIGH;
@@ -509,7 +507,7 @@ static int buttonState = HIGH;
 static long lastDebounceTime;
 static long buttonPressStartTime;
 
-
+  digitalWrite(FLORAled,button);
   // read the state of the pushbutton value:
   int First_buttonState = digitalRead(First_buttonPin);
   if (First_buttonState == HIGH) { button = First_buttonState; }
@@ -544,7 +542,39 @@ static long buttonPressStartTime;
     }    
   }  // This ends processing of a debounced state change
   lastButtonState = button;
-  digitalWrite(FLORAled,button);
+  
+  digitalWrite(FLORAled,!button);
+
+
+
+
+
+*/
+
+uint8_t debounceRead(int pin)
+{
+  
+  uint8_t pinState = digitalRead(pin);
+  uint32_t timeout = millis();
+  while ((millis() - timeout) < 100)
+  {
+    if (digitalRead(pin) != pinState)
+    {
+      pinState = digitalRead(pin);
+      timeout = millis();
+    }
+  }
+
+  return pinState;
+}
+
+ISR(PCINT0_vect)
+{
+  cli();
+  First_buttonState = digitalRead(First_buttonPin);
+  Second_buttonState = digitalRead(Second_buttonPin);
+  sei();
+
 }
 
 Adafruit_NeoPixel pixels = Adafruit_NeoPixel(NUMPIXELS, NeoPixelPin, NEO_GRB + NEO_KHZ800);
@@ -639,9 +669,9 @@ PCINT7..0 is cleared, pin change interrupt on the corresponding I/O pin is disab
 //ISR(PCINT2_vect){} // for pins PCINT16-PCINT23 (PD0-PD7)
 */
 
-    PCMSK0 |= _BV(PCINT5) | _BV(PCINT6);    //select Pin-Change Interrupt 6 on Port B
-    PCIFR |= _BV(PCIF0);                    //Clear any pending pin-change interrupts
-    PCICR |= _BV(PCIE0);                    //Enable pin-change interrupt
+//    PCMSK0 |= _BV(PCINT5) | _BV(PCINT6);    //select Pin-Change Interrupt 6 on Port B
+//    PCIFR |= _BV(PCIF0);                    //Clear any pending pin-change interrupts
+//    PCICR |= _BV(PCIE0);                    //Enable pin-change interrupt
 
 //    pciSetup(9);
 //    pciSetup(10);
@@ -662,21 +692,23 @@ void loop()                     // run over and over again
   // check if the pushbutton is pressed.
   // if it is, the buttonState is true:
 
-//      Serial.println();
-//     Serial.println(First_buttonState);
-//      Serial.println();      
-//      Serial.println(Second_buttonState);
-//      Serial.println();     
+
+//Serial.println(First_buttonState,DEC);     
+//Serial.println(Second_buttonState,DEC);     
   
-  if (First_buttonState == HIGH) {
-      First_buttonState != First_buttonState;
-        // pixels.Color takes RGB values, from 0,0,0 up to 255,255,255
+  
+  if (debounceRead(First_buttonPin) == LOW)  {
+//      First_buttonState = LOW;
+      // pixels.Color takes RGB values, from 0,0,0 up to 255,255,255
       pixels.setPixelColor(NUMPIXELS, pixels.Color(0,150,0)); // Moderately bright green color.
       pixels.show(); // This sends the updated pixel color to the hardware
-      delay(250);
       Serial.print("Fram Address to be writtent to is!  ");
-      Serial.println(WrFramAddr, DEC);     
-      W_Date2eeprom();
+      Serial.println(WrFramAddr, DEC);
+      if ((WrFramAddr+GPSpageSize) < FramSize) {
+        W_Date2eeprom();
+      } else {
+        Serial.println("Fram full, please download and reset! ");
+      }
 
   }   
 
@@ -688,16 +720,15 @@ void loop()                     // run over and over again
     
 //char c;
   
-  if (Second_buttonState == HIGH) {
-      Second_buttonState != Second_buttonState;
+  if (debounceRead(Second_buttonPin) == LOW) {
+//      Second_buttonState = LOW;
       // pixels.Color takes RGB values, from 0,0,0 up to 255,255,255
       pixels.setPixelColor(NUMPIXELS, pixels.Color(0,100,0)); // Moderately bright green color.
       pixels.show(); // This sends the updated pixel color to the hardware.
-      delay (250);
       Serial.print("Removing last GPS Entry at FRAM address! ");
       Serial.println(WrFramAddr, DEC);    
       WrFramAddr = LastFramAddr;
-      LastFramAddr = WrFramAddr - GPSpageSize;
+      if (LastFramAddr > 0 ) LastFramAddr = WrFramAddr - GPSpageSize;
       // this is incase of power failure or device failure  we know when the last eepro entry was done.
       sysdata.LastAddress[0] = LastFramAddr;
       fram.write8((FramSize-ReserveFramAddr)+7,sysdata.LastAddress[0]);
@@ -706,11 +737,11 @@ void loop()                     // run over and over again
   }
   
   if (stringComplete) {
-      if ( inputString == "D" ) {
+      if ((inputString == "D") || (inputString == "d")) {
           
           R_DataFeeprom();
                 
-        } else if ( inputString == "R" ) {
+        } else if ((inputString == "R") || (inputString == "r")) {
 
             DateTime();
             Serial.println("First Set Saved FramAddress to 0!");
@@ -740,7 +771,7 @@ void loop()                     // run over and over again
                 Serial.println(WrFramAddr, DEC);               
             }
             
-        } else if ( inputString == "S" ) {
+        } else if ((inputString == "S") || (inputString == "s")) {
     
           //Loop until you have a good NMEA sentence
           while (!GPS.parse(GPS.lastNMEA())) {    // this also sets the newNMEAreceived() flag to false
