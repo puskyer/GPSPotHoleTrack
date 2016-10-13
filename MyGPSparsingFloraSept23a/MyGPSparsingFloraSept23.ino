@@ -57,7 +57,8 @@ xx = number of satellites in use
 p.p = horizontal dilution of precision 
 a.b = Antenna altitude above mean-sea-level
 M = units of antenna altitude, meters 
-c.d = Geoidal heightM = units of geoidal height, meters 
+c.d = Geoidal height
+M = units of geoidal height, meters 
 x.x = Age of Differential GPS data (seconds since last valid RTCM transmission) 
 nnnn = Differential reference station ID, 0000 to 1023 
 
@@ -117,8 +118,8 @@ ReserveFramAddr+5 is sysdata.SysYear);
 ReserveFramAddr+6 is sysdata.SysMonth);
 ReserveFramAddr+7 is sysdata.LastAddress[0]);
 */
-#define ReserveFramAddr 32 // reserve 15 bytes for our own use..
-#define GPSpageSize 32  // number of bytes we will use for data structure 
+#define ReserveFramAddr 15 // reserve 15 bytes for our own use..
+#define GPSpageSize 16  // number of bytes we will use for data structure 
 
 uint16_t WrFramAddr = 0;   // points to the address being used
 uint16_t RdFramAddr = 0;   // points to the address being used
@@ -133,8 +134,8 @@ uint16_t LastFramAddr = 0; //points to last address written to.
 // set pin numbers:
 const int First_buttonPin = 9;     // the number of the pushbutton pin
 const int Second_buttonPin = 10;   // the number of the pushbutton pin
-const int NeoPixelPin = 6;         // the number of the LED pin
-const int FLORAled = 8;            // Pin D7 has an LED connected on FLORA. give it a name:
+const int NeoPixelPin = 8;         // the number of the LED pin
+const int FLORAled = 7;            // Pin D7 has an LED connected on FLORA. give it a name:
 
 #define NUMPIXELS  1           // How many NeoPixels are attached
 
@@ -160,8 +161,6 @@ typedef struct {
        
 } SYSdata ;
 
-int LangthGPSdata = 26;
-
 typedef struct {
     byte GPSHour;
     byte GPSMinutes;
@@ -169,8 +168,9 @@ typedef struct {
     byte GPSDay;
     byte GPSMonth;
     byte GPSYear;
-    char LATArrayBytes[10];
-    char LONArrayBytes[10];
+    byte LATArrayBytes[4];
+    byte LONArrayBytes[4];
+   
 } GPSdata ;
 
 union CRCdata {
@@ -180,13 +180,13 @@ union CRCdata {
 
 
 union LATdata {
-  double GPSLatitudeDegrees;
-  byte LATArrayOfFourBytes[10];
+  float GPSLatitudeDegrees;
+  byte LATArrayOfFourBytes[4];
 };
 
 union LONdata {
-  double GPSLongitudeDegrees;
-  byte LONArrayOfFourBytes[10];
+  float GPSLongitudeDegrees;
+  byte LONArrayOfFourBytes[4];
 };
 
 SYSdata sysdata ;
@@ -204,7 +204,7 @@ Adafruit_GPS GPS(&GPSSerial);
 
 // Set GPSECHO to 'false' to turn off echoing the GPS data to the Serial console
 // Set to 'true' if you want to debug and listen to the raw GPS sentences. 
-#define GPSECHO  true
+#define GPSECHO  false
 
 // this keeps track of whether we're using the interrupt
 // off by default!
@@ -267,116 +267,6 @@ byte i2ccrc8 (byte* addr, byte len)
 }  // end of crc8
 
 
-void fmtDouble(double val, byte precision, char *buf, unsigned bufLen = 0xffff);
-unsigned fmtUnsigned(unsigned long val, char *buf, unsigned bufLen = 0xffff, byte width = 0);
-
-//
-// Produce a formatted string in a buffer corresponding to the value provided.
-// If the 'width' parameter is non-zero, the value will be padded with leading
-// zeroes to achieve the specified width.  The number of characters added to
-// the buffer (not including the null termination) is returned.
-//
-unsigned
-fmtUnsigned(unsigned long val, char *buf, unsigned bufLen, byte width)
-{
- if (!buf || !bufLen)
-   return(0);
-
- // produce the digit string (backwards in the digit buffer)
- char dbuf[10];
- unsigned idx = 0;
- while (idx < sizeof(dbuf))
- {
-   dbuf[idx++] = (val % 10) + '0';
-   if ((val /= 10) == 0)
-     break;
- }
-
- // copy the optional leading zeroes and digits to the target buffer
- unsigned len = 0;
- byte padding = (width > idx) ? width - idx : 0;
- char c = '0';
- while ((--bufLen > 0) && (idx || padding))
- {
-   if (padding)
-     padding--;
-   else
-     c = dbuf[--idx];
-   *buf++ = c;
-   len++;
- }
-
- // add the null termination
- *buf = '\0';
- return(len);
-}
-
-//
-// Format a floating point value with number of decimal places.
-// The 'precision' parameter is a number from 0 to 6 indicating the desired decimal places.
-// The 'buf' parameter points to a buffer to receive the formatted string.  This must be
-// sufficiently large to contain the resulting string.  The buffer's length may be
-// optionally specified.  If it is given, the maximum length of the generated string
-// will be one less than the specified value.
-//
-// example: fmtDouble(3.1415, 2, buf); // produces 3.14 (two decimal places)
-//
-void
-fmtDouble(double val, byte precision, char *buf, unsigned bufLen)
-{
- if (!buf || !bufLen)
-   return;
-
- // limit the precision to the maximum allowed value
- const byte maxPrecision = 6;
- if (precision > maxPrecision)
-   precision = maxPrecision;
-
- if (--bufLen > 0)
- {
-   // check for a negative value
-   if (val < 0.0)
-   {
-     val = -val;
-     *buf = '-';
-     bufLen--;
-   }
-
-   // compute the rounding factor and fractional multiplier
-   double roundingFactor = 0.5;
-   unsigned long mult = 1;
-   for (byte i = 0; i < precision; i++)
-   {
-     roundingFactor /= 10.0;
-     mult *= 10;
-   }
-
-   if (bufLen > 0)
-   {
-     // apply the rounding factor
-     val += roundingFactor;
-
-     // add the integral portion to the buffer
-     unsigned len = fmtUnsigned((unsigned long)val, buf, bufLen);
-     buf += len;
-     bufLen -= len;
-   }
-
-   // handle the fractional portion
-   if ((precision > 0) && (bufLen > 0))
-   {
-     *buf++ = '.';
-     if (--bufLen > 0)
-       buf += fmtUnsigned((unsigned long)((val - (unsigned long)val) * mult), buf, bufLen, precision);
-   }
- }
-
- // null-terminate the string
- *buf = '\0';
-}
-
-
-
 void W_Date2eeprom() {
 
   union LATdata latdata;
@@ -393,10 +283,6 @@ void W_Date2eeprom() {
             if (c) Serial.print(c);
           }
 
-           for (int i=0 ; i < 10 ; i++) gpsdata.LATArrayBytes[i] = 48;
-           for (int i=0 ; i < 10 ; i++) gpsdata.LONArrayBytes[i] = 48;     
-
-
             Serial.print("Start writting to FRAM at Address! ");
             Serial.println(WrFramAddr, DEC);            
             gpsdata.GPSHour = GPS.hour;
@@ -405,88 +291,47 @@ void W_Date2eeprom() {
             gpsdata.GPSDay = GPS.day;
             gpsdata.GPSMonth = GPS.month;
             gpsdata.GPSYear = GPS.year;
-            fmtDouble(GPS.latitudeDegrees, 6, char(gpsdata.LATArrayBytes), 10);
-            fmtDouble(GPS.longitudeDegrees, 6, char(gpsdata.LONArrayBytes), 10); 
-
-//            latdata.GPSLatitudeDegrees = GPS.latitudeDegrees;
-//            for (int i=0 ; i < 8 ; i++) gpsdata.LATArrayBytes[i] = latdata.LATArrayOfFourBytes[i];
-          
-//            londata.GPSLongitudeDegrees = GPS.longitudeDegrees;
-//            for (int i=0 ; i < 8 ; i++) gpsdata.LONArrayBytes[i] = londata.LONArrayOfFourBytes[i];            
-
-            crcdata.GPSDataCRC=i2ccrc8(&gpsdata.GPSHour,LangthGPSdata);
-
-            Serial.println("Hours;Minutes;Seconds;Day;Moth;Year;LatitudeDegrees;GPSLongitudeDegrees;CRC;Calculated CrC");
-            Serial.print(gpsdata.GPSHour);
-            Serial.print(";");
-            Serial.print(gpsdata.GPSMinutes);
-            Serial.print(";");
-            Serial.print(gpsdata.GPSSeconds);
-            Serial.print(";");
-            Serial.print(gpsdata.GPSDay);
-            Serial.print(";");
-            Serial.print(gpsdata.GPSMonth);
-            Serial.print(";");
-            Serial.print(gpsdata.GPSYear);
-            Serial.print(";");
-            Serial.print(gpsdata.LATArrayBytes);
-            Serial.print(";");   
-            Serial.print(gpsdata.LONArrayBytes);
-            Serial.print(";");
-            Serial.print(crcdata.GPSDataCRC, DEC);
-  
-
+            latdata.GPSLatitudeDegrees = GPS.latitudeDegrees;
+            londata.GPSLongitudeDegrees = GPS.longitudeDegrees;
+            crcdata.GPSDataCRC=i2ccrc8(&gpsdata.GPSHour,14);
+/*
+                Serial.println("Hours;Minutes;Seconds;Day;Moth;Year;LatitudeDegrees;GPSLongitudeDegrees;CRC;Calculated CrC");
+                Serial.print(gpsdata.GPSHour);
+                Serial.print(";");
+                Serial.print(gpsdata.GPSMinutes);
+                Serial.print(";");
+                Serial.print(gpsdata.GPSSeconds);
+                Serial.print(";");
+                Serial.print(gpsdata.GPSDay);
+                Serial.print(";");
+                Serial.print(gpsdata.GPSMonth);
+                Serial.print(";");
+                Serial.print(gpsdata.GPSYear);
+                Serial.print(";");
+                Serial.print(latdata.GPSLatitudeDegrees);
+                Serial.print(";");
+                Serial.print(londata.GPSLongitudeDegrees);
+                Serial.print(";");
+                Serial.print(GPSDataCRC, DEC);
+                Serial.print(";");
+                Serial.println(i2ccrc8(&gpsdata.GPSHour,14),DEC);            
+*/
             fram.write8(WrFramAddr+0,gpsdata.GPSHour);
             fram.write8(WrFramAddr+1,gpsdata.GPSMinutes);
             fram.write8(WrFramAddr+2,gpsdata.GPSSeconds);
             fram.write8(WrFramAddr+3,gpsdata.GPSDay);
             fram.write8(WrFramAddr+4,gpsdata.GPSMonth);
             fram.write8(WrFramAddr+5,gpsdata.GPSYear);
-
-            fram.write8(WrFramAddr+6,gpsdata.LATArrayBytes[0]);
-            fram.write8(WrFramAddr+7,gpsdata.LATArrayBytes[1]);
-            fram.write8(WrFramAddr+8,gpsdata.LATArrayBytes[2]);
-            fram.write8(WrFramAddr+9,gpsdata.LATArrayBytes[3]);
-            fram.write8(WrFramAddr+10,gpsdata.LATArrayBytes[4]);
-            fram.write8(WrFramAddr+11,gpsdata.LATArrayBytes[5]);
-            fram.write8(WrFramAddr+12,gpsdata.LATArrayBytes[6]);            
-            fram.write8(WrFramAddr+13,gpsdata.LATArrayBytes[7]);
-            fram.write8(WrFramAddr+14,gpsdata.LATArrayBytes[8]);
-            fram.write8(WrFramAddr+15,gpsdata.LATArrayBytes[9]);
-            
-            fram.write8(WrFramAddr+16,gpsdata.LONArrayBytes[0]);
-            fram.write8(WrFramAddr+17,gpsdata.LONArrayBytes[1]);
-            fram.write8(WrFramAddr+18,gpsdata.LONArrayBytes[2]);
-            fram.write8(WrFramAddr+19,gpsdata.LONArrayBytes[3]);
-            fram.write8(WrFramAddr+20,gpsdata.LONArrayBytes[4]);
-            fram.write8(WrFramAddr+21,gpsdata.LONArrayBytes[5]);
-            fram.write8(WrFramAddr+22,gpsdata.LONArrayBytes[6]);
-            fram.write8(WrFramAddr+23,gpsdata.LONArrayBytes[7]);
-            fram.write8(WrFramAddr+24,gpsdata.LONArrayBytes[8]);
-            fram.write8(WrFramAddr+25,gpsdata.LONArrayBytes[9]);
-
-/*            
             fram.write8(WrFramAddr+6,latdata.LATArrayOfFourBytes[0]);
             fram.write8(WrFramAddr+7,latdata.LATArrayOfFourBytes[1]);
             fram.write8(WrFramAddr+8,latdata.LATArrayOfFourBytes[2]);
             fram.write8(WrFramAddr+9,latdata.LATArrayOfFourBytes[3]);
-            fram.write8(WrFramAddr+10,latdata.LATArrayOfFourBytes[4]);
-            fram.write8(WrFramAddr+11,latdata.LATArrayOfFourBytes[5]);
-            fram.write8(WrFramAddr+12,latdata.LATArrayOfFourBytes[6]);            
-            fram.write8(WrFramAddr+13,latdata.LATArrayOfFourBytes[7]);
-            
-            fram.write8(WrFramAddr+14,londata.LONArrayOfFourBytes[0]);
-            fram.write8(WrFramAddr+15,londata.LONArrayOfFourBytes[1]);
-            fram.write8(WrFramAddr+16,londata.LONArrayOfFourBytes[2]);
-            fram.write8(WrFramAddr+17,londata.LONArrayOfFourBytes[3]);
-            fram.write8(WrFramAddr+18,londata.LONArrayOfFourBytes[4]);
-            fram.write8(WrFramAddr+19,londata.LONArrayOfFourBytes[5]);
-            fram.write8(WrFramAddr+20,londata.LONArrayOfFourBytes[6]);
-            fram.write8(WrFramAddr+21,londata.LONArrayOfFourBytes[7]);
-*/
-                                                
-            fram.write8(WrFramAddr+26,crcdata.GPSArrayCRC[0]);             
-            fram.write8(WrFramAddr+27,crcdata.GPSArrayCRC[1]);            
+            fram.write8(WrFramAddr+10,londata.LONArrayOfFourBytes[0]);
+            fram.write8(WrFramAddr+11,londata.LONArrayOfFourBytes[1]);
+            fram.write8(WrFramAddr+12,londata.LONArrayOfFourBytes[2]);
+            fram.write8(WrFramAddr+13,londata.LONArrayOfFourBytes[3]);
+            fram.write8(WrFramAddr+14,crcdata.GPSArrayCRC[0]);             
+            fram.write8(WrFramAddr+15,crcdata.GPSArrayCRC[1]);            
             
             LastFramAddr = WrFramAddr;
 
@@ -523,7 +368,6 @@ void R_DataFeeprom() {
       Serial.print("Dumpingt from FRAM address! ");
       Serial.println(LastFramAddr, DEC);      
       Serial.println("Hours;Minutes;Seconds;Day;Moth;Year;LatitudeDegrees;GPSLongitudeDegrees;CRC;Calculated CrC");
-      
   while  (RdFramAddr <= LastFramAddr) {
                 gpsdata.GPSHour=fram.read8(RdFramAddr+0);
                 gpsdata.GPSMinutes=fram.read8(RdFramAddr+1);
@@ -531,48 +375,17 @@ void R_DataFeeprom() {
                 gpsdata.GPSDay=fram.read8(RdFramAddr+3);
                 gpsdata.GPSMonth=fram.read8(RdFramAddr+4);
                 gpsdata.GPSYear=fram.read8(RdFramAddr+5);
-                gpsdata.LATArrayBytes[0]=fram.read8(RdFramAddr+6);
-                gpsdata.LATArrayBytes[1]=fram.read8(RdFramAddr+7);
-                gpsdata.LATArrayBytes[2]=fram.read8(RdFramAddr+8);
-                gpsdata.LATArrayBytes[3]=fram.read8(RdFramAddr+9);
-                gpsdata.LATArrayBytes[4]=fram.read8(RdFramAddr+10);
-                gpsdata.LATArrayBytes[5]=fram.read8(RdFramAddr+11);
-                gpsdata.LATArrayBytes[6]=fram.read8(RdFramAddr+12);
-                gpsdata.LATArrayBytes[7]=fram.read8(RdFramAddr+13);                                                
                 
-                gpsdata.LONArrayBytes[0]=fram.read8(RdFramAddr+14);
-                gpsdata.LONArrayBytes[1]=fram.read8(RdFramAddr+15);
-                gpsdata.LONArrayBytes[2]=fram.read8(RdFramAddr+16);
-                gpsdata.LONArrayBytes[3]=fram.read8(RdFramAddr+17);
-                gpsdata.LONArrayBytes[4]=fram.read8(RdFramAddr+18);
-                gpsdata.LONArrayBytes[5]=fram.read8(RdFramAddr+19);
-                gpsdata.LONArrayBytes[6]=fram.read8(RdFramAddr+20);
-                gpsdata.LONArrayBytes[7]=fram.read8(RdFramAddr+21);
-/*                
                 latdata.LATArrayOfFourBytes[0]=fram.read8(RdFramAddr+6);
                 latdata.LATArrayOfFourBytes[1]=fram.read8(RdFramAddr+7);
                 latdata.LATArrayOfFourBytes[2]=fram.read8(RdFramAddr+8);
                 latdata.LATArrayOfFourBytes[3]=fram.read8(RdFramAddr+9);
-                latdata.LATArrayOfFourBytes[4]=fram.read8(RdFramAddr+10);
-                latdata.LATArrayOfFourBytes[5]=fram.read8(RdFramAddr+11);
-                latdata.LATArrayOfFourBytes[6]=fram.read8(RdFramAddr+12);
-                latdata.LATArrayOfFourBytes[7]=fram.read8(RdFramAddr+13);                                                
-                
-                londata.LONArrayOfFourBytes[0]=fram.read8(RdFramAddr+14);
-                londata.LONArrayOfFourBytes[1]=fram.read8(RdFramAddr+15);
-                londata.LONArrayOfFourBytes[2]=fram.read8(RdFramAddr+16);
-                londata.LONArrayOfFourBytes[3]=fram.read8(RdFramAddr+17);
-                londata.LONArrayOfFourBytes[4]=fram.read8(RdFramAddr+18);
-                londata.LONArrayOfFourBytes[5]=fram.read8(RdFramAddr+19);
-                londata.LONArrayOfFourBytes[6]=fram.read8(RdFramAddr+20);
-                londata.LONArrayOfFourBytes[7]=fram.read8(RdFramAddr+21);
-
-                for (int i=0 ; i < 8 ; i++) gpsdata.LATArrayBytes[i] = latdata.LATArrayOfFourBytes[i];
-                for (int i=0 ; i < 8 ; i++) gpsdata.LONArrayBytes[i] = londata.LONArrayOfFourBytes[i];            
-*/
-                
-                crcdata.GPSArrayCRC[0]=fram.read8(RdFramAddr+22);
-                crcdata.GPSArrayCRC[1]=fram.read8(RdFramAddr+23);
+                londata.LONArrayOfFourBytes[0]=fram.read8(RdFramAddr+10);
+                londata.LONArrayOfFourBytes[1]=fram.read8(RdFramAddr+11);
+                londata.LONArrayOfFourBytes[2]=fram.read8(RdFramAddr+12);
+                londata.LONArrayOfFourBytes[3]=fram.read8(RdFramAddr+13);
+                crcdata.GPSArrayCRC[0]=fram.read8(RdFramAddr+14);
+                crcdata.GPSArrayCRC[1]=fram.read8(RdFramAddr+15);
  
                 Serial.print(gpsdata.GPSHour);
                 Serial.print(";");
@@ -586,13 +399,13 @@ void R_DataFeeprom() {
                 Serial.print(";");
                 Serial.print(gpsdata.GPSYear);
                 Serial.print(";");
-                Serial.print(gpsdata.LATArrayBytes);
-                Serial.print(";");   
-                Serial.print(gpsdata.LONArrayBytes);
+                Serial.print(latdata.GPSLatitudeDegrees);
+                Serial.print(";");
+                Serial.print(londata.GPSLongitudeDegrees);
                 Serial.print(";");
                 Serial.print(crcdata.GPSDataCRC, DEC);
                 Serial.print(";");           
-                Serial.println(i2ccrc8(&gpsdata.GPSHour,LangthGPSdata),DEC);               
+                Serial.println(i2ccrc8(&gpsdata.GPSHour,14),DEC);               
 
                 RdFramAddr +=GPSpageSize;
    }
@@ -732,6 +545,10 @@ static long buttonPressStartTime;
   
   digitalWrite(FLORAled,!button);
 
+
+
+
+
 */
 
 uint8_t debounceRead(int pin)
@@ -759,9 +576,6 @@ ISR(PCINT0_vect)
   sei();
 
 }
-
-
-
 
 Adafruit_NeoPixel pixels = Adafruit_NeoPixel(NUMPIXELS, NeoPixelPin, NEO_GRB + NEO_KHZ800);
 
@@ -870,6 +684,7 @@ PCINT7..0 is cleared, pin change interrupt on the corresponding I/O pin is disab
 void loop()                     // run over and over again
 {
 
+//Serial.println("Start Loop");
 
 //  boolean W_Date2eeprom();
   int R_DataFeeprom();
@@ -880,33 +695,21 @@ void loop()                     // run over and over again
 
 //Serial.println(First_buttonState,DEC);     
 //Serial.println(Second_buttonState,DEC);     
-
- 
-         // if you want to debug, this is a good time to do it!
-            if (GPSECHO) {
-            
-           //Loop until you have a good NMEA sentence
-             while (!GPS.parse(GPS.lastNMEA())) {    // this also sets the newNMEAreceived() flag to false
-//             Serial.println("Start GPSECHO");
-             char c=GPS.read();
-              if (c) Serial.print(c);
-             }
-            }
+  
   
   if (debounceRead(First_buttonPin) == LOW)  {
 //      First_buttonState = LOW;
-      digitalWrite(FLORAled, HIGH);
       // pixels.Color takes RGB values, from 0,0,0 up to 255,255,255
       pixels.setPixelColor(NUMPIXELS, pixels.Color(0,150,0)); // Moderately bright green color.
       pixels.show(); // This sends the updated pixel color to the hardware
       Serial.print("Fram Address to be writtent to is!  ");
       Serial.println(WrFramAddr, DEC);
-      if (WrFramAddr+GPSpageSize+ReserveFramAddr < FramSize) {
+      if ((WrFramAddr+GPSpageSize) < FramSize) {
         W_Date2eeprom();
       } else {
         Serial.println("Fram full, please download and reset! ");
       }
-      digitalWrite(FLORAled, LOW);
+
   }   
 
    /*
@@ -919,27 +722,18 @@ void loop()                     // run over and over again
   
   if (debounceRead(Second_buttonPin) == LOW) {
 //      Second_buttonState = LOW;
-      digitalWrite(FLORAled, HIGH);
       // pixels.Color takes RGB values, from 0,0,0 up to 255,255,255
       pixels.setPixelColor(NUMPIXELS, pixels.Color(0,100,0)); // Moderately bright green color.
       pixels.show(); // This sends the updated pixel color to the hardware.
-      if (LastFramAddr - GPSpageSize > 0 ) {
-        Serial.print("Removing last GPS Entry at FRAM address! ");
-        Serial.println(WrFramAddr, DEC);
-        LastFramAddr = WrFramAddr - GPSpageSize;   
-        WrFramAddr = LastFramAddr;
-        // this is incase of power failure or device failure  we know when the last eepro entry was done.
-        sysdata.LastAddress[0] = LastFramAddr;
-        fram.write8((FramSize-ReserveFramAddr)+7,sysdata.LastAddress[0]);
-        Serial.print("We are now at FRAM address! ");
-        Serial.println(WrFramAddr, DEC); 
-      } else {
-        Serial.print("We are staying at FRAM address! ");
-        Serial.print(WrFramAddr, DEC);
-        Serial.println(" We are at the start of the FRAM! ");
-                 
-      }
-      digitalWrite(FLORAled, LOW);
+      Serial.print("Removing last GPS Entry at FRAM address! ");
+      Serial.println(WrFramAddr, DEC);    
+      WrFramAddr = LastFramAddr;
+      if (LastFramAddr > 0 ) LastFramAddr = WrFramAddr - GPSpageSize;
+      // this is incase of power failure or device failure  we know when the last eepro entry was done.
+      sysdata.LastAddress[0] = LastFramAddr;
+      fram.write8((FramSize-ReserveFramAddr)+7,sysdata.LastAddress[0]);
+      Serial.print("We are at FRAM address! ");
+      Serial.println(WrFramAddr, DEC);    
   }
   
   if (stringComplete) {
@@ -971,8 +765,6 @@ void loop()                     // run over and over again
     
                 DateTime();
                 Serial.print("FRAM has been Erased!");
-                WrFramAddr = 0; 
-                LastFramAddr = 0;
             } else {
                 DateTime();
                 Serial.print("Adddress is already at ");
@@ -988,13 +780,6 @@ void loop()                     // run over and over again
             if (GPSECHO)
             if (c) Serial.print(c);
           }
-
-           GPSdata gpsdata;
-           for (int i=0 ; i < 10 ; i++) gpsdata.LATArrayBytes[i] = 48;
-           for (int i=0 ; i < 10 ; i++) gpsdata.LONArrayBytes[i] = 48;
-           fmtDouble(GPS.latitudeDegrees, 6, char(gpsdata.LATArrayBytes),10);
-           fmtDouble(GPS.longitudeDegrees, 6, char(gpsdata.LONArrayBytes),10); 
-
                 Serial.println();
                 Serial.print(GPS.hour);
                 Serial.print(":");
@@ -1008,9 +793,9 @@ void loop()                     // run over and over again
                 Serial.print("/");              
                 Serial.println(GPS.year);
                 Serial.print("GPSLatitudeDegrees: ");
-                Serial.println(gpsdata.LATArrayBytes);
+                Serial.println(GPS.latitudeDegrees);
                 Serial.print("GPSLongitudeDegrees: ");
-                Serial.println(gpsdata.LONArrayBytes); 
+                Serial.println(GPS.longitudeDegrees); 
                 Serial.println();
         } else {
           Serial.print("Unknown command! -");
