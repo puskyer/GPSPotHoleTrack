@@ -142,7 +142,6 @@ const int FLORAled = 8;            // Pin D7 has an LED connected on FLORA. give
 
 #define NUMPIXEL  0           // How many NeoPixels are attached
 boolean NoGPSFix;
-
 // variables will change:
 volatile boolean First_buttonState = false;     // variable for first pushbutton status
 volatile boolean Second_buttonState = false;    // variable for reading the pushbutton status
@@ -150,6 +149,9 @@ volatile int buttonState;
 unsigned long StartButtonPress = 0;             // start of button press time
 unsigned long StopButtonPress = 0;              // end of button press time
 unsigned long First_buttonPressDelay = 0;
+
+String inputString;                            // a string to hold incoming data
+boolean stringComplete = false;                // whether the string is complete
 
 typedef struct {
     byte SysHour;
@@ -195,39 +197,6 @@ union LONdata {
   byte LONArrayOfFourBytes[8];
 };
 
-const int inputStringSize = 10;
-boolean stringComplete = false;     // whether the string is complete
-volatile char inputChar[inputStringSize];
-
-void serialEventRun(void) {
-  if (Serial.available()) serialEvent();
-}
-
-/*
-  SerialEvent occurs whenever a new data comes in the
- hardware serial RX.  This routine is run between each
- time loop() runs, so using delay inside loop can delay
- response.  Multiple bytes of data may be available.
- */
-void serialEvent() {
-
-  int indx = 0;
-  while ((Serial.available()) && (!stringComplete)) {
-    // get the new byte:
-    char inChar = (char)Serial.read();
-    // if the incoming character is a newline, set a flag
-    // so the main loop can do something about it:
-    if (inChar == '\n') {
-      inputChar[indx] = '\0';
-      stringComplete = true;
-    } else {
-    // add it to the inputChar:
-    inputChar[indx] += inChar;
-    indx += 1;
-    }
-  }
-}
-
 SYSdata sysdata ;
 
 // For the GPS module:
@@ -243,7 +212,7 @@ Adafruit_GPS GPS(&GPSSerial);
 
 // Set GPSECHO to 'false' to turn off echoing the GPS data to the Serial console
 // Set to 'true' if you want to debug and listen to the raw GPS sentences. 
-boolean GPSECHO = true;
+boolean GPSECHO = false;
 
 // this keeps track of whether we're using the interrupt
 // off by default!
@@ -257,6 +226,32 @@ int FreeRam () {
   return &stack_dummy - sbrk(0);
 }
 
+
+void serialEventRun(void) {
+  if (Serial.available()) serialEvent();
+}
+
+/*
+  SerialEvent occurs whenever a new data comes in the
+ hardware serial RX.  This routine is run between each
+ time loop() runs, so using delay inside loop can delay
+ response.  Multiple bytes of data may be available.
+ */
+void serialEvent() {
+  
+  while (Serial.available()) {
+    // get the new byte:
+    char inChar = (char)Serial.read();
+    // if the incoming character is a newline, set a flag
+    // so the main loop can do something about it:
+    if (inChar == '\n') {
+      stringComplete = true;
+    } else {
+    // add it to the inputString:
+    inputString += inChar;
+    }
+  }
+}
 // calculate 8-bit CRC
 byte i2ccrc8 (byte* addr, byte len)
 {
@@ -286,7 +281,10 @@ void W_Date2eeprom() {
 
           //Loop until you have a good NMEA sentence
           while (!GPS.parse(GPS.lastNMEA())) {    // this also sets the newNMEAreceived() flag to false
-           delay(10);
+           char c=GPS.read();
+         // if you want to debug, this is a good time to do it!
+            if (GPSECHO)
+            if (c) Serial.print(c);
           }
             GPS.parse(GPS.lastNMEA());
             Serial.print("Start writting to FRAM at Address! ");
@@ -380,9 +378,9 @@ void W_Date2eeprom() {
             Serial.println(crcdata.GPSDataCRC, DEC);
             Serial.print("Finish writting to FRAM next address will be! ");
             Serial.println(WrFramAddr, DEC);    
-//            Serial.print(GPS.latitudeDegrees);
-//            Serial.print(";");   
-//            Serial.println(GPS.longitudeDegrees);            
+            Serial.print(GPS.latitudeDegrees);
+            Serial.print(";");   
+            Serial.println(GPS.longitudeDegrees);            
 }
 
 void R_DataFeeprom() {
@@ -455,9 +453,9 @@ void R_DataFeeprom() {
                 Serial.print(crcdata.GPSDataCRC, DEC);
                 Serial.print(";");           
                 Serial.println(i2ccrc8(&gpsdata.GPSHour,LangthGPSdata),DEC);               
-//                Serial.print(GPS.latitudeDegrees);
-//                Serial.print(";");   
-//                Serial.println(GPS.longitudeDegrees);  
+                Serial.print(GPS.latitudeDegrees);
+                Serial.print(";");   
+                Serial.println(GPS.longitudeDegrees);  
 
                 RdFramAddr +=GPSpageSize;
    }
@@ -505,455 +503,11 @@ void DateTime() {
     Serial.println(second());
 }
 
-uint8_t debounceRead(int pin)
-{
-  
-  uint8_t pinState = digitalRead(pin);
-  uint32_t timeout = millis();
-  while ((millis() - timeout) < 100)
-  {
-    if (digitalRead(pin) != pinState)
-    {
-      pinState = digitalRead(pin);
-      timeout = millis();
-    }
-  }
-
-  return pinState;
-}
-
 void pciSetup(byte pin)
 {
     *digitalPinToPCMSK(pin) |= bit (digitalPinToPCMSKbit(pin));  // enable pin
     PCIFR  |= bit (digitalPinToPCICRbit(pin)); // clear any outstanding interrupt
     PCICR  |= bit (digitalPinToPCICRbit(pin)); // enable interrupt for the group
-}
-
-ISR(PCINT0_vect)
-{
-  cli();
-  First_buttonState = digitalRead(First_buttonPin);
-  Second_buttonState = digitalRead(Second_buttonPin);
-  sei();
-
-}
-
-
-// Interrupt is called once a millisecond, looks for any new GPS data, and stores it
-SIGNAL(TIMER0_COMPA_vect) {
-  char c = GPS.read();
-  // if you want to debug, this is a good time to do it!
-  if (GPSECHO)
-    if (c) Serial.write(c);  
-    // writing direct to UDR0 is much much faster than Serial.print 
-    // but only one character can be written at a time. 
-}
-
-void useInterrupt(boolean v) {
-  if (v) {
-    // Timer0 is already used for millis() - we'll just interrupt somewhere
-    // in the middle and call the "Compare A" function above
-    OCR0A = 0xAF;
-    TIMSK0 |= _BV(OCIE0A);
-    usingInterrupt = true;
-  } else {
-    // do not call the interrupt function COMPA anymore
-    TIMSK0 &= ~_BV(OCIE0A);
-    usingInterrupt = false;
-  }
-}
-
-
-Adafruit_NeoPixel pixels = Adafruit_NeoPixel(NUMPIXEL, NeoPixelPin, NEO_GRB + NEO_KHZ800);
-
-void setup()  
-{
-
-/*
-Pin Change Mask Register 0 – PCMSK0
-
-PCINT7 PCINT6 PCINT5 PCINT4 PCINT3 PCINT2 PCINT1 PCINT0 PCMSK0
-bit7   bit6   bit5   bit4   bit3   bit2   bit1   bit0
-• Bit 7..0 – PCINT7..0: Pin Change Enable Mask 7..0
-Each PCINT7..0 bit selects whether pin change interrupt is enabled on the corresponding I/O pin. If PCINT7..0
-is set and the PCIE0 bit in PCICR is set, pin change interrupt is enabled on the corresponding I/O pin. If
-PCINT7..0 is cleared, pin change interrupt on the corresponding I/O pin is disabled.
-
-// There are three interrupt vectors:
-//ISR(PCINT0_vect){} // for pins PCINT0-PCINT7   (PB0-PB7)  
-//ISR(PCINT1_vect){} // for pins PCINT8-PCINT14  (PC0-PC6)
-//ISR(PCINT2_vect){} // for pins PCINT16-PCINT23 (PD0-PD7)
-*/
-
-//    PCMSK0 |= _BV(PCINT5) | _BV(PCINT6);    //select Pin-Change Interrupt 6 on Port B
-//    PCIFR |= _BV(PCIF0);                    //Clear any pending pin-change interrupts
-//    PCICR |= _BV(PCIE0);                    //Enable pin-change interrupt
-
-//    pciSetup(9);
-//    pciSetup(10);
-
-
-  pixels.begin(); // This initializes the NeoPixel library.
-  // pixels.Color takes RGB values, from 0,0,0 up to 255,255,255
-  pixels.setPixelColor(NUMPIXEL, pixels.Color(0,0,0)); // Moderately bright green color.   
-  pixels.show(); // This sends the updated pixel color to the hardware.
-
-// initialize the LED pin as an output:
-  pinMode(FLORAled, OUTPUT); 
-
-// initialize the pushbutton pin as an input:
-  pinMode(First_buttonPin, INPUT_PULLUP);
-  pinMode(Second_buttonPin, INPUT_PULLUP);
-  
-// connect at 115200 so we can read the GPS fast enough and echo without dropping chars
-// also spit it out
-// Wait for Mo usb port to switch from bootloader to Serial on the MO ****** CRITICAL TO DO THIS *********
-
-  while ( ! Serial ) { delay ( 1 ); }
-  Serial.begin(115200);
-
-  Serial.println("Gather Location!");
-  
-  // 9600 NMEA is the default baud rate for Adafruit MTK GPS's- some use 4800
-  GPS.begin(9600);
-
-  // uncomment this line to turn on RMC (recommended minimum) and GGA (fix data) including altitude
-  GPS.sendCommand(PMTK_SET_NMEA_OUTPUT_RMCGGA);
-  // GPS.sendCommand(PMTK_SET_NMEA_OUTPUT_GGA);
-
-  // Set the update rate
-  GPS.sendCommand(PMTK_SET_NMEA_UPDATE_1HZ);   // 1 Hz update rate
-  // For the parsing code to work nicely and have time to sort thru the data, and
-  // print it out we don't suggest using anything higher than 1 Hz
-
-  // Request updates on antenna status, comment out to keep quiet
-  // GPS.sendCommand(PGCMD_ANTENNA);
-  GPS.sendCommand(PGCMD_NOANTENNA);              //Turn off antenna update nuisance data
-
-Serial.print("GPS firmware version!  ");
-// Ask for firmware version
-Serial.println(GPSSerial.print(PMTK_Q_RELEASE));
-
-  // the nice thing about this code is you can have a timer0 interrupt go off
-  // every 1 millisecond, and read data from the GPS for you. that makes the
-  // loop code a heck of a lot easier!
-  useInterrupt(true);
-
-  
-// read the eeprom to see if this is a restart or if it is the first time
-// if sysdata.LastAddress[0] is zero then this is a first time if a non-zero then it is a restart
-
- fram.begin();
-
-Serial.print("Checking EEPROM for Last Address used! LastAddress is ");
-  sysdata.LastAddress[0] = fram.read8((FramSize-ReserveFramAddr)+7);
-  sysdata.LastAddress[1] = fram.read8((FramSize-ReserveFramAddr)+8); 
-  sysdata.LastAddress[2] = fram.read8((FramSize-ReserveFramAddr)+9);  
-  sysdata.LastAddress[3] = fram.read8((FramSize-ReserveFramAddr)+10);  
-  LastFramAddr = sysdata.LastAddress[0];
-Serial.println(LastFramAddr, DEC);
-  
-  if ( LastFramAddr != 0 ) {
-  WrFramAddr = LastFramAddr + GPSpageSize ;
-  } else {
-  LastFramAddr = WrFramAddr ;   
-  }
-
-/*
-  //Loop until you have a good NMEA sentence
-  while (!GPS.newNMEAreceived())  {    // this also sets the newNMEAreceived() flag to false
-    delay(5); 
-  }
-
-  while (!GPS.parse(GPS.lastNMEA()))  {    // this also sets the newNMEAreceived() flag to false
-    delay(5); 
-  }
- */
-   Serial.print("Here"); 
-   setTime(GPS.hour,GPS.minute,GPS.seconds,GPS.day,GPS.month,GPS.year);
-   adjustTime(offset * SECS_PER_HOUR);
-
-   Serial.print("Number of GPS Satellites: ");
-   Serial.println(GPS.satellites);
-   Serial.print("GPS.fix is : ");
-   Serial.println(GPS.fix);
-   
-   if (GPS.fix == 0) { 
-     Serial.println("No GPS Fix!");
-     NoGPSFix = true;
-     // pixels.Color takes RGB values, from 0,0,0 up to 255,255,255
-     pixels.setPixelColor(NUMPIXEL, pixels.Color(150,0,0)); // Moderately bright green color. 
-     pixels.show(); // This sends the updated pixel color to the hardware.
-     delay(250);
-   } else {
-     Serial.println("Got GPS Fix!");
-   }
-   DateTime();   
-   // pixels.Color takes RGB values, from 0,0,0 up to 255,255,255
-   pixels.setPixelColor(NUMPIXEL, pixels.Color(0,0,0)); // Moderately bright green color. 
-   pixels.show(); // This sends the updated pixel color to the hardware.
-   digitalWrite(FLORAled, LOW);
-  
-}
-
-void loop()                     // run over and over again
-{
-
-
-//  boolean W_Date2eeprom();
-  int R_DataFeeprom();
-  byte i2ccrc8(byte *, byte);
-  
-  // check if the pushbutton is pressed.
-  // if it is, the _buttonPin is true:
-
-  //Loop until you have a good NMEA sentence
-  while (!GPS.newNMEAreceived())  {    // this also sets the newNMEAreceived() flag to false
-    delay(5); 
-  }
-  while (!GPS.parse(GPS.lastNMEA()))  {    // this also sets the newNMEAreceived() flag to false
-    delay(5); 
-  }
-//  Serial.print(GPS.fix);
-
-//turn off Neopixel Magenta
-  if ((GPS.fix == 1) && NoGPSFix == true) { 
-    // pixels.Color takes RGB values, from 0,0,0 up to 255,255,255
-    pixels.setPixelColor(NUMPIXEL, pixels.Color(64,0,64)); // Moderately bright green color. 
-    pixels.show(); // This sends the updated pixel color to the hardware.
-    delay(250);
-    NoGPSFix = false;
-  }
-
- 
-  if (debounceRead(First_buttonPin) == LOW)  {
-
-      if (GPS.fix == 1) {
-          digitalWrite(FLORAled, HIGH);
-          Serial.print("Fram Address to be writtent to is!  ");
-          Serial.println(WrFramAddr, DEC);
-          if (WrFramAddr + GPSpageSize + ReserveFramAddr < FramSize) {
-            
-            W_Date2eeprom();
-            
-          } else {
-            Serial.println("Fram full, please download and reset! ");
-          }
-          digitalWrite(FLORAled, LOW);
-      } else {
-          Serial.println("We do not have a fix yet! ");
-      }
-  }   
-  
-  if (debounceRead(Second_buttonPin) == LOW) {
-
-      digitalWrite(FLORAled, HIGH);
-      
-      if (LastFramAddr - GPSpageSize != 0 ) {
-        Serial.print("Removing last GPS Entry at FRAM address! ");
-        Serial.println(WrFramAddr, DEC);
-        WrFramAddr = LastFramAddr;        
-        LastFramAddr = WrFramAddr - GPSpageSize;   
-        
-        // this is incase of power failure or device failure  we know when the last eepro entry was done.
-        sysdata.LastAddress[0] = LastFramAddr;
-        fram.write8((FramSize-ReserveFramAddr)+7,sysdata.LastAddress[0]);
-        fram.write8((FramSize-ReserveFramAddr)+8,sysdata.LastAddress[1]);
-        fram.write8((FramSize-ReserveFramAddr)+9,sysdata.LastAddress[2]);
-        fram.write8((FramSize-ReserveFramAddr)+10,sysdata.LastAddress[3]);
-        Serial.print("We are now at FRAM address! ");
-        Serial.println(WrFramAddr, DEC); 
-      } else {
-        Serial.print("We are staying at FRAM address! ");
-        Serial.print(WrFramAddr, DEC);
-        Serial.println(" We are at the start of the FRAM! ");       
-      }
-      digitalWrite(FLORAled, LOW);
-  }
-  
-   /*
-      0x0a (ASCII newline)
-      0x0d (ASCII carriage return)
-      CRLF (0x0d0a)
-    */
-  
-  if (stringComplete) {
-    
-// Dump all stored data    
-      if ((inputChar[0] == 'D') || (inputChar[0] == 'd')) {
-          
-          R_DataFeeprom();
-          
-// enable/disable Antenna reporting 
-      } else if ((inputChar[0] == 'A') || (inputChar[0] == 'a')) {
-          int indx=1;
-          boolean done = true;
-          while (done) {
-            if (inputChar[indx] != '+' || inputChar[indx] != '-' ) {
-               indx++;
- //              Serial.println(indx);
-            } else if (inputChar[indx] == '-') {
-               Serial.println("1");              
-                GPS.sendCommand(PGCMD_NOANTENNA);  //Turn off antenna update nuisance data  
-                done = !done;
-            } else {
-                // Request updates on antenna status, comment out to keep quiet
-                GPS.sendCommand(PGCMD_ANTENNA);
-                done = !done;                 
-            }
-          }
-          
-// check if we have GPS Fix          
-        } else if ((inputChar[0] == 'F') || (inputChar[0] == 'f')) {
-          
-          Serial.print("GPS.Fix is;  ");
-          Serial.println(GPS.fix);
-
-// reset storage 
-        } else if ((inputChar[0] == 'R') || (inputChar[0] == 'r')) {
-
-            DateTime();
-            Serial.println("First Set Saved FramAddress to 0!");
-            fram.write8((FramSize-ReserveFramAddr)+7,0);
-            fram.write8((FramSize-ReserveFramAddr)+8,0);
-            fram.write8((FramSize-ReserveFramAddr)+9,0);
-            fram.write8((FramSize-ReserveFramAddr)+10,0);
-            LastFramAddr = 0;
-            Serial.println();
-
-            if (WrFramAddr != 0) {
-                DateTime();
-                Serial.print("Zero out the FRAM up to Last address Write!  ");
-                Serial.println(WrFramAddr, DEC);
-                // the following will zero out the eeprom
-                for (unsigned int i=0; i < WrFramAddr ; i++) {
-                  fram.write8(i,0);
-                  if (fram.read8(i) != 0) {
-                    Serial.print("Memory Error @ !");                  
-                    Serial.println(i, DEC);                      
-                  } else {
-                    Serial.print("Erased FRAM Address!  ");
-                    Serial.println(i, DEC);              
-                  }
-                }
-                DateTime();
-                Serial.print("FRAM has been Erased!");
-                WrFramAddr = 0; 
-                LastFramAddr = 0;
-            } else {
-                DateTime();
-                Serial.print("Adddress is already at ");
-                Serial.println(WrFramAddr, DEC);               
-            }
-// display status of GPS, and Lat and Lon            
-        } else if ((inputChar[0] == 'S') || (inputChar[0] == 's')) {
-
-          union LATdata latdata;
-          union LONdata londata;
-          //Loop until you have a good NMEA sentence
-          while (!GPS.parse(GPS.lastNMEA())) {    // this also sets the newNMEAreceived() flag to false
-           delay(5);
-          }
-                DateTime();
-                Serial.print("Number of GPS Satellites: ");
-                Serial.println(GPS.satellites);
-                if (GPS.fix == 1) {
-                   latdata.GPSLatitudeDegrees= GPS.latitudeDegrees;
-                   londata.GPSLongitudeDegrees = GPS.longitudeDegrees;         
-                   fmtDouble(latdata.GPSLatitudeDegrees, 6, GPSStringLAT,16);
-                   fmtDouble(londata.GPSLongitudeDegrees, 6, GPSStringLON,16);
-                   Serial.print("GPSLatitudeDegrees: ");
-                   if (latdata.GPSLatitudeDegrees < 0) {Serial.print("-");}
-                   Serial.println(GPSStringLAT);
-                   Serial.print("GPSLongitudeDegrees: ");
-                   if (londata.GPSLongitudeDegrees < 0) Serial.print("-");               
-                   Serial.println(GPSStringLON);
-
-                } else {
-                   Serial.println("We do not have a fix yet! ");
-                }
-
-                Serial.println();
-
-// Enable/disable echo
-        } else if ((inputChar[0] == 'E') || (inputChar[0] == 'e')){
-           GPSECHO = !GPSECHO;
-           if (GPSECHO)  { 
-            Serial.println("Echo On!");
-           } else {
-            Serial.println("Echo Off!");
-           }
-
-// Get time from GPS and set Flora data/time           
-        } else if ((inputChar[0] == 'T') || (inputChar[0] == 't')){
-
-          //Loop until you have a good NMEA sentence
-          while (!GPS.parse(GPS.lastNMEA())) {    // this also sets the newNMEAreceived() flag to false
-           delay(5);
-          }
-           setTime(GPS.hour,GPS.minute,GPS.seconds,GPS.day,GPS.month,GPS.year);
-           adjustTime(offset * SECS_PER_HOUR);
-           DateTime();
-
- // change time zone           
-        } else if ((inputChar[0] == 'Z') || (inputChar[0] == 'z')) {
-          // Offset hours from gps time (UTC)
-          //volatile int offset = -4;  // Eastern Daylight Time (USA)
-          //volatile int offset = -5;  // Eastern Standard Time (USA)
-          //volatile int offset = -6;  // Centril Standard Time (USA)
-          //volatile int offset = -8;  // Pacific Standard Time (USA)
-          //volatile int offset = -7;  // Pacific Daylight Time (USA)
-          int indx=1;
-          boolean done = true;
-//          char mystring[4];
-          int myoffset;
-                    Serial.println(inputChar[indx]);   
-          while (done) {
-            if ((inputChar[indx] != '+') || (inputChar[indx] != '-')) {
-               indx++;
-                    Serial.println(inputChar[indx]);    
-
-            } else if (inputChar[indx] == '-') {
-                Serial.println("2");             
-                myoffset = int(inputChar[indx+1]*-1);
-                Serial.println(myoffset);  
-                done = !done;
-            } else {
-                Serial.println("3");    
-                myoffset = int(inputChar[indx+1]);
-                Serial.println(myoffset);  
-                done = !done;                 
-            }
-          }
-          Serial.println(inputChar[indx]);           
-          Serial.println(inputChar[indx+1]);           
-          adjustTime(myoffset * SECS_PER_HOUR);
-        } else {
-          Serial.print("Unknown command! [");
-          Serial.print(inputChar[0]);
-          Serial.println("]!");
-          Serial.println();
-          Serial.println("commands are! D (Download)");
-          Serial.println("              R (Reset EEprom)");   
-          Serial.println("              S (Status)");
-          Serial.println("              E (GPSECHO)");
-          Serial.println("              T (Set time)");
-          Serial.println("              A<+-> (Enable/Disable Antenna)");
-          Serial.println("              F (Check if we have GPS fix)");
-          Serial.println("              Z<+-># (GPSECHO)");
-          // Offset hours from gps time (UTC)
-          Serial.print("                Z-4; Atlantic Standard Time (USA)");
-          Serial.print("                Z-5; Eastern  Standard Time (USA)");
-          Serial.print("                Z-6; Central  Standard Time (USA)");
-          Serial.print("                Z-7; Pacific  Standard Time (USA)");          
-         
-        }
-    // clear the string and the flag...
-    for (int i=0;i < inputStringSize; i++) {
-      inputChar[i] = '\0'; 
-      }
-    stringComplete = false; 
-  }  
 }
 
 
@@ -1054,68 +608,382 @@ static long buttonPressStartTime;
   
   digitalWrite(FLORAled,!button);
 
+*/
 
-//required for fmod()
-#include <math.h>;
- 
-// converts lat/long from Adafruit
-// degree-minute format to decimal-degrees
-double convertDegMinToDecDeg (float degMin) {
-  double min = 0.0;
-  double decDeg = 0.0;
- 
-  //get the minutes, fmod() requires double
-  min = fmod((double)degMin, 100.0);
- 
-  //rebuild coordinates in decimal degrees
-  degMin = (int) ( degMin / 100 );
-  decDeg = degMin + ( min / 60 );
- 
-  return decDeg;
-}
-
-
-  if (GPS.newNMEAreceived())
+uint8_t debounceRead(int pin)
+{
+  
+  uint8_t pinState = digitalRead(pin);
+  uint32_t timeout = millis();
+  while ((millis() - timeout) < 100)
   {
-    if (GPS.parse(GPS.lastNMEA()))
+    if (digitalRead(pin) != pinState)
     {
-      if (GPS.fix != 0)
-      {
-        if ((previous_latitude != GPS.latitudeDegrees) || 
-            (previous_longitudeDegrees != GPS.longitudeDegrees))
-        {
-          double lonA = M_PI * previous_longitudeDegrees / 180.0;
-          double lonB = M_PI * GPS.longitudeDegrees / 180.0;
-          double latA = M_PI * previous_latitude / 180.0;
-          double latB = M_PI * GPS.latitudeDegrees / 180.0;
-
-          double a = sin((lonA - lonB) / 2.0);
-          double b = cos(lonA) * cos(lonB);
-          double c = sin((latB - latA) / 2.0);
-          double d = sqrt(a * a + b * c * c);
-          double e = asin(d);
-          double f = 12734890.0 * e;
-
-          Serial.print("Time: ");
-          Serial.print(GPS.hour, DEC); Serial.print(':');
-          Serial.print(GPS.minute, DEC); Serial.print(':');
-          Serial.print(GPS.seconds, DEC); Serial.print('.');
-          Serial.print(GPS.milliseconds);
-          Serial.print(" - Location (in degrees): ");
-          Serial.print(GPS.latitudeDegrees, 9);
-          Serial.print(", "); 
-          Serial.print(GPS.longitudeDegrees, 9);
-          Serial.print(" ("); 
-          Serial.print(f, 0);
-          Serial.println(")"); 
-          previous_latitude = GPS.latitudeDegrees;
-          previous_longitudeDegrees = GPS.longitudeDegrees;
-        }
-      }
+      pinState = digitalRead(pin);
+      timeout = millis();
     }
   }
 
+  return pinState;
+}
+
+ISR(PCINT0_vect)
+{
+  cli();
+  First_buttonState = digitalRead(First_buttonPin);
+  Second_buttonState = digitalRead(Second_buttonPin);
+  sei();
+
+}
 
 
+// Interrupt is called once a millisecond, looks for any new GPS data, and stores it
+SIGNAL(TIMER0_COMPA_vect) {
+  char c = GPS.read();
+  // if you want to debug, this is a good time to do it!
+  if (GPSECHO)
+    if (c) Serial.write(c);  
+    // writing direct to UDR0 is much much faster than Serial.print 
+    // but only one character can be written at a time. 
+}
+
+void useInterrupt(boolean v) {
+  if (v) {
+    // Timer0 is already used for millis() - we'll just interrupt somewhere
+    // in the middle and call the "Compare A" function above
+    OCR0A = 0xAF;
+    TIMSK0 |= _BV(OCIE0A);
+    usingInterrupt = true;
+  } else {
+    // do not call the interrupt function COMPA anymore
+    TIMSK0 &= ~_BV(OCIE0A);
+    usingInterrupt = false;
+  }
+}
+
+
+Adafruit_NeoPixel pixels = Adafruit_NeoPixel(NUMPIXEL, NeoPixelPin, NEO_GRB + NEO_KHZ800);
+
+void setup()  
+{
+
+  pixels.begin(); // This initializes the NeoPixel library.
+  pixels.show(); // This sends the updated pixel color to the hardware.
+
+// reserve 10 bytes for the inputString:
+  inputString.reserve(5);
+
+// initialize the LED pin as an output:
+  pinMode(FLORAled, OUTPUT); 
+
+// initialize the pushbutton pin as an input:
+  pinMode(First_buttonPin, INPUT_PULLUP);
+  pinMode(Second_buttonPin, INPUT_PULLUP);
+  
+// connect at 115200 so we can read the GPS fast enough and echo without dropping chars
+// also spit it out
+// Wait for Mo usb port to switch from bootloader to Serial on the MO ****** CRITICAL TO DO THIS *********
+
+  while ( ! Serial ) { delay ( 1 ); }
+  Serial.begin(115200);
+
+  Serial.println("Gather Location!");
+  
+  // 9600 NMEA is the default baud rate for Adafruit MTK GPS's- some use 4800
+  GPS.begin(9600);
+
+  // uncomment this line to turn on RMC (recommended minimum) and GGA (fix data) including altitude
+  GPS.sendCommand(PMTK_SET_NMEA_OUTPUT_RMCGGA);
+  // GPS.sendCommand(PMTK_SET_NMEA_OUTPUT_GGA);
+
+  // Set the update rate
+  GPS.sendCommand(PMTK_SET_NMEA_UPDATE_1HZ);   // 1 Hz update rate
+  // For the parsing code to work nicely and have time to sort thru the data, and
+  // print it out we don't suggest using anything higher than 1 Hz
+
+  // Request updates on antenna status, comment out to keep quiet
+  // GPS.sendCommand(PGCMD_ANTENNA);
+  GPS.sendCommand(PGCMD_NOANTENNA);              //Turn off antenna update nuisance data
+
+Serial.println();
+// Ask for firmware version
+Serial.println(GPSSerial.print(PMTK_Q_RELEASE));
+
+// read the eeprom to see if this is a restart or if it is the first time
+// if sysdata.LastAddress[0] is zero then this is a first time if a non-zero then it is a restart
+
+ fram.begin();
+
+Serial.println("Checking EEPROM for Last Address used! ");
+  sysdata.LastAddress[0] = fram.read8((FramSize-ReserveFramAddr)+7);
+  sysdata.LastAddress[1] = fram.read8((FramSize-ReserveFramAddr)+8); 
+  sysdata.LastAddress[2] = fram.read8((FramSize-ReserveFramAddr)+9);  
+  sysdata.LastAddress[3] = fram.read8((FramSize-ReserveFramAddr)+10);  
+  LastFramAddr = sysdata.LastAddress[0];
+Serial.print(" LastAddress is ");  
+Serial.println(LastFramAddr, DEC);
+  
+  if ( LastFramAddr != 0 ) {
+  WrFramAddr = LastFramAddr + GPSpageSize ;
+  } else {
+  LastFramAddr = WrFramAddr ;   
+  }
+
+  delay(500);
+  //Loop until you have a good NMEA sentence
+  while (!GPS.parse(GPS.lastNMEA())) {    // this also sets the newNMEAreceived() flag to false
+   char c=GPS.read();
+  }
+
+   setTime(GPS.hour,GPS.minute,GPS.seconds,GPS.day,GPS.month,GPS.year);
+   adjustTime(offset * SECS_PER_HOUR);
+
+   Serial.print("Number of GPS Satellites: ");
+   Serial.println(GPS.satellites);
+   if (GPS.fix == 0) { 
+     Serial.println("No GPS Fix!");
+     boolean NoGPSFix = true;
+     // pixels.Color takes RGB values, from 0,0,0 up to 255,255,255
+     pixels.setPixelColor(NUMPIXEL, pixels.Color(150,0,0)); // Moderately bright green color. 
+     pixels.show(); // This sends the updated pixel color to the hardware.
+     delay(250);
+   } else {
+     Serial.println("Got GPS Fix!");
+   }
+   DateTime();   
+    
+/*
+Pin Change Mask Register 0 – PCMSK0
+
+PCINT7 PCINT6 PCINT5 PCINT4 PCINT3 PCINT2 PCINT1 PCINT0 PCMSK0
+bit7   bit6   bit5   bit4   bit3   bit2   bit1   bit0
+• Bit 7..0 – PCINT7..0: Pin Change Enable Mask 7..0
+Each PCINT7..0 bit selects whether pin change interrupt is enabled on the corresponding I/O pin. If PCINT7..0
+is set and the PCIE0 bit in PCICR is set, pin change interrupt is enabled on the corresponding I/O pin. If
+PCINT7..0 is cleared, pin change interrupt on the corresponding I/O pin is disabled.
+
+// There are three interrupt vectors:
+//ISR(PCINT0_vect){} // for pins PCINT0-PCINT7   (PB0-PB7)  
+//ISR(PCINT1_vect){} // for pins PCINT8-PCINT14  (PC0-PC6)
+//ISR(PCINT2_vect){} // for pins PCINT16-PCINT23 (PD0-PD7)
 */
+
+//    PCMSK0 |= _BV(PCINT5) | _BV(PCINT6);    //select Pin-Change Interrupt 6 on Port B
+//    PCIFR |= _BV(PCIF0);                    //Clear any pending pin-change interrupts
+//    PCICR |= _BV(PCIE0);                    //Enable pin-change interrupt
+
+//    pciSetup(9);
+//    pciSetup(10);
+
+  digitalWrite(FLORAled, LOW);
+
+  // the nice thing about this code is you can have a timer0 interrupt go off
+  // every 1 millisecond, and read data from the GPS for you. that makes the
+  // loop code a heck of a lot easier!
+  useInterrupt(true);
+  
+}
+
+void loop()                     // run over and over again
+{
+
+
+//  boolean W_Date2eeprom();
+  int R_DataFeeprom();
+  byte i2ccrc8(byte *, byte);
+  // check if the pushbutton is pressed.
+  // if it is, the buttonState is true:
+
+  //Loop until you have a good NMEA sentence
+  GPS.parse(GPS.lastNMEA());
+  if ((GPS.fix == 1) && NoGPSFix == true) { 
+  // pixels.Color takes RGB values, from 0,0,0 up to 255,255,255
+  pixels.setPixelColor(NUMPIXEL, pixels.Color(150,0,0)); // Moderately bright green color. 
+  pixels.show(); // This sends the updated pixel color to the hardware.
+  boolean NoGPSFix = false;
+  
+  }
+ 
+  if (debounceRead(First_buttonPin) == LOW)  {
+
+      // pixels.Color takes RGB values, from 0,0,0 up to 255,255,255
+      pixels.setPixelColor(NUMPIXEL, pixels.Color(0,150,0)); // Moderately bright green color.
+      pixels.show(); // This sends the updated pixel color to the hardware
+
+      if (GPS.fix) {
+          digitalWrite(FLORAled, HIGH);
+          Serial.print("Fram Address to be writtent to is!  ");
+          Serial.println(WrFramAddr, DEC);
+          if (WrFramAddr+GPSpageSize+ReserveFramAddr < FramSize) {
+            W_Date2eeprom();
+          } else {
+            Serial.println("Fram full, please download and reset! ");
+          }
+          digitalWrite(FLORAled, LOW);
+      } else {
+          Serial.println("We do not have a fix yet! ");
+      }
+  }   
+  
+  if (debounceRead(Second_buttonPin) == LOW) {
+
+      digitalWrite(FLORAled, HIGH);
+      
+      // pixels.Color takes RGB values, from 0,0,0 up to 255,255,255
+      pixels.setPixelColor(NUMPIXEL, pixels.Color(0,100,0)); // Moderately bright green color.
+      pixels.show(); // This sends the updated pixel color to the hardware.
+      
+      if (LastFramAddr - GPSpageSize > 0 ) {
+        Serial.print("Removing last GPS Entry at FRAM address! ");
+        Serial.println(WrFramAddr, DEC);
+        LastFramAddr = WrFramAddr - GPSpageSize;   
+        WrFramAddr = LastFramAddr;
+        
+        // this is incase of power failure or device failure  we know when the last eepro entry was done.
+        sysdata.LastAddress[0] = LastFramAddr;
+        fram.write8((FramSize-ReserveFramAddr)+7,sysdata.LastAddress[0]);
+        fram.write8((FramSize-ReserveFramAddr)+8,sysdata.LastAddress[1]);
+        fram.write8((FramSize-ReserveFramAddr)+9,sysdata.LastAddress[2]);
+        fram.write8((FramSize-ReserveFramAddr)+10,sysdata.LastAddress[3]);
+        Serial.print("We are now at FRAM address! ");
+        Serial.println(WrFramAddr, DEC); 
+      } else {
+        Serial.print("We are staying at FRAM address! ");
+        Serial.print(WrFramAddr, DEC);
+        Serial.println(" We are at the start of the FRAM! ");
+                 
+      }
+      digitalWrite(FLORAled, LOW);
+  }
+  
+   /*
+      0x0a (ASCII newline)
+      0x0d (ASCII carriage return)
+      CRLF (0x0d0a)
+    */
+  
+  if (stringComplete) {
+      if ((inputString == "D") || (inputString == "d")) {
+          
+          R_DataFeeprom();
+                
+        } else if ((inputString == "R") || (inputString == "r")) {
+
+            DateTime();
+            Serial.println("First Set Saved FramAddress to 0!");
+            fram.write8((FramSize-ReserveFramAddr)+7,0);
+            fram.write8((FramSize-ReserveFramAddr)+8,0);
+            fram.write8((FramSize-ReserveFramAddr)+9,0);
+            fram.write8((FramSize-ReserveFramAddr)+10,0);
+            LastFramAddr = 0;
+            Serial.println();
+
+            if (WrFramAddr != 0) {
+                DateTime();
+                Serial.print("Zero out the FRAM up to Last address Write!  ");
+                Serial.println(WrFramAddr, DEC);
+                // the following will zero out the eeprom
+                for (unsigned int i=0; i < WrFramAddr ; i++) {
+                  fram.write8(i,0);
+                  if (fram.read8(i) != 0) {
+                    Serial.print("Memory Error @ !");                  
+                    Serial.println(i, DEC);                      
+                  } else {
+                    Serial.print("Erased FRAM Address!  ");
+                    Serial.println(i, DEC);              
+                  }
+                }
+                DateTime();
+                Serial.print("FRAM has been Erased!");
+                WrFramAddr = 0; 
+                LastFramAddr = 0;
+            } else {
+                DateTime();
+                Serial.print("Adddress is already at ");
+                Serial.println(WrFramAddr, DEC);               
+            }
+            
+        } else if ((inputString == "S") || (inputString == "s")) {
+
+          union LATdata latdata;
+          union LONdata londata;
+          //Loop until you have a good NMEA sentence
+          while (!GPS.parse(GPS.lastNMEA())) {    // this also sets the newNMEAreceived() flag to false
+           char c=GPS.read();
+          }
+
+                GPS.parse(GPS.lastNMEA());
+                DateTime();
+                Serial.print("Number of GPS Satellites: ");
+                Serial.println(GPS.satellites);
+                if (GPS.fix) {
+                   latdata.GPSLatitudeDegrees= GPS.latitudeDegrees;
+                   londata.GPSLongitudeDegrees = GPS.longitudeDegrees;         
+                   fmtDouble(latdata.GPSLatitudeDegrees, 6, GPSStringLAT,16);
+                   fmtDouble(londata.GPSLongitudeDegrees, 6, GPSStringLON,16);
+                   Serial.print("GPSLatitudeDegrees: ");
+                   if (latdata.GPSLatitudeDegrees < 0) {Serial.print("-");}
+                   Serial.println(GPSStringLAT);
+                   Serial.print("GPSLongitudeDegrees: ");
+                   if (londata.GPSLongitudeDegrees < 0) Serial.print("-");               
+                   Serial.println(GPSStringLON);
+
+                } else {
+                   Serial.println("We do not have a fix yet! ");
+                }
+
+                Serial.println();
+        } else if ((inputString == "E") || (inputString == "e")){
+           GPSECHO = !GPSECHO;
+           if (GPSECHO)  { 
+            Serial.println("Echo On!");
+           } else {
+            Serial.println("Echo Off!");
+           }
+        } else if ((inputString == "T") || (inputString == "t")){
+
+          //Loop until you have a good NMEA sentence
+          while (!GPS.parse(GPS.lastNMEA())) {    // this also sets the newNMEAreceived() flag to false
+           char c=GPS.read();
+          }
+           GPS.parse(GPS.lastNMEA());
+           setTime(GPS.hour,GPS.minute,GPS.seconds,GPS.day,GPS.month,GPS.year);
+           adjustTime(offset * SECS_PER_HOUR);
+           DateTime(); 
+        } else if ((inputString[0] == "Z") || (inputString[0] == "z")){
+          // Offset hours from gps time (UTC)
+          
+          //volatile int offset = -4;  // Eastern Daylight Time (USA)
+          //volatile int offset = -5;  // Eastern Standard Time (USA)
+          //volatile int offset = -6;  // Centril Standard Time (USA)
+          //volatile int offset = -8;  // Pacific Standard Time (USA)
+          //volatile int offset = -7;  // Pacific Daylight Time (USA)
+          int indx=1;
+          boolean done = true;
+          char mystring[3];
+          while (!done) {
+            if ((inputString[indx] == " ") && ((inputString[indx] != "+") || (inputString[indx] != "-")))
+            indx++;
+          }
+          for (int i=0;i < 2;i++) { 
+            mystring[i] == inputString[indx+i]; 
+            }
+          
+          Serial.print(mystring);
+                  
+        } else {
+          Serial.print("Unknown command! -");
+          Serial.println(inputString);
+          Serial.println();
+          Serial.println("commands are! D (Download)");
+          Serial.println("              R (Reset EEprom)");   
+          Serial.println("              S (Status)");
+          Serial.println("              E (GPSECHO)");
+          Serial.println("              T (Set time)");
+        }
+    // clear the string and the flag...
+    inputString = "";
+    stringComplete = false; 
+  }  
+}
 
